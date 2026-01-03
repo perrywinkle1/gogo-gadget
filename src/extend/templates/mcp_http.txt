@@ -1,0 +1,36 @@
+// Synthesized MCP: {{NAME}}
+// Purpose: {{DESCRIPTION}}
+// API: {{API_BASE_URL}}
+
+import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+
+const server = new Server(
+  {
+    name: "{{NAME}}",
+    version: "1.0.0",
+  },
+  {
+    capabilities: {
+      tools: {},
+    },
+  }
+);
+
+server.setRequestHandler("tools/list", async () => {
+  return {
+    tools: [
+      {
+        name: "placeholder_tool",
+        description: "Placeholder - implement based on {{DESCRIPTION}}",
+        inputSchema: {
+          type: "object",
+          properties: {},
+        },
+      },
+    ],
+  };
+});
+
+const transport = new StdioServerTransport();
+await server.connect(transport);

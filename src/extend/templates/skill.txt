@@ -1,0 +1,26 @@
+# {{NAME}}
+
+## Description
+{{DESCRIPTION}}
+
+## Trigger
+`{{TRIGGER}}`
+
+## Instructions
+
+When this skill is triggered:
+
+1. Analyze the user's request
+2. Execute the appropriate actions
+3. Report the results
+
+## Examples
+
+```
+User: {{TRIGGER}}
+Assistant: I'll help you with that...
+```
+
+## Notes
+
+This skill was automatically synthesized by jarvis-v2.

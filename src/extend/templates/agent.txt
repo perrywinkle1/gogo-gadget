@@ -1,0 +1,23 @@
+# {{NAME}}
+
+## Specialization
+{{SPECIALIZATION}}
+
+## Description
+
+This agent specializes in {{SPECIALIZATION}} tasks and can be delegated
+work in this domain.
+
+## Capabilities
+
+- Deep expertise in {{SPECIALIZATION}}
+- Can work autonomously on related tasks
+- Reports results back to the parent agent
+
+## Usage
+
+Delegate tasks related to {{SPECIALIZATION}} to this agent.
+
+## Notes
+
+This agent was automatically synthesized by jarvis-v2.

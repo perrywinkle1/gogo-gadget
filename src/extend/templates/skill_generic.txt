@@ -1,0 +1,15 @@
+# {{name}} Skill
+
+## Trigger
+Use when the user asks about {{trigger}}
+
+## Description
+{{purpose}}
+
+## Instructions
+1. Analyze the user's request
+2. Execute the appropriate action
+3. Return results
+
+## Examples
+- "{{trigger}}" -> Execute {{name}} action

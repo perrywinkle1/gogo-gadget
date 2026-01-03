@@ -1,0 +1,813 @@
+//! Hot Loader Module
+//!
+//! Registers capabilities without requiring restart.
+//!
+//! ## Design
+//!
+//! - Skills can be loaded without restart (written to ~/.claude/skills/)
+//! - Agents can be loaded without restart (written to ~/.claude/agents/)
+//! - MCPs require Claude settings update and restart
+//!
+//! ## MCP Restart Strategy
+//!
+//! Since Claude Code requires a restart to pick up new MCP configurations,
+//! the loader:
+//! 1. Writes the MCP server code to the appropriate location
+//! 2. Updates ~/.claude/settings.json with the MCP configuration
+//! 3. Returns LoadResult with `restart_required: true`
+//! 4. The caller should inform the user to restart Claude
+
+use super::{CapabilityType, SynthesizedCapability};
+use anyhow::{Context, Result};
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::fs;
+use std::path::PathBuf;
+use std::process::Command;
+use tracing::{debug, info, warn};
+
+/// Result of loading a capability
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LoadResult {
+    /// Whether loading succeeded
+    pub success: bool,
+    /// Message describing the result
+    pub message: String,
+    /// Whether a restart is required
+    pub restart_required: bool,
+    /// Path where capability was installed
+    pub installed_path: Option<PathBuf>,
+    /// Configuration that was applied
+    pub config_applied: Option<serde_json::Value>,
+}
+
+impl LoadResult {
+    /// Create a successful load result
+    pub fn success(message: impl Into<String>) -> Self {
+        Self {
+            success: true,
+            message: message.into(),
+            restart_required: false,
+            installed_path: None,
+            config_applied: None,
+        }
+    }
+
+    /// Create a result requiring restart
+    pub fn requires_restart(message: impl Into<String>) -> Self {
+        Self {
+            success: true,
+            message: message.into(),
+            restart_required: true,
+            installed_path: None,
+            config_applied: None,
+        }
+    }
+
+    /// Create a failed result
+    pub fn failure(message: impl Into<String>) -> Self {
+        Self {
+            success: false,
+            message: message.into(),
+            restart_required: false,
+            installed_path: None,
+            config_applied: None,
+        }
+    }
+
+    /// Add installed path to result
+    pub fn with_path(mut self, path: PathBuf) -> Self {
+        self.installed_path = Some(path);
+        self
+    }
+
+    /// Add config to result
+    pub fn with_config(mut self, config: serde_json::Value) -> Self {
+        self.config_applied = Some(config);
+        self
+    }
+}
+
+/// Claude Code settings file structure
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+struct ClaudeSettings {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    permissions: Vec<String>,
+
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    mcpServers: HashMap<String, McpServerConfig>,
+
+    #[serde(flatten)]
+    other: serde_json::Value,
+}
+
+/// MCP server configuration in Claude settings
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct McpServerConfig {
+    command: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    args: Vec<String>,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    env: HashMap<String, String>,
+}
+
+/// Hot loader for registering capabilities at runtime
+#[derive(Debug, Clone)]
+pub struct HotLoader {
+    /// Path to Claude settings file
+    claude_settings_path: PathBuf,
+    /// Directory for skills
+    skills_dir: PathBuf,
+    /// Directory for agents
+    agents_dir: PathBuf,
+    /// Directory for MCP servers
+    mcp_dir: PathBuf,
+    /// Jarvis capabilities directory
+    jarvis_capabilities_dir: PathBuf,
+}
+
+impl Default for HotLoader {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl HotLoader {
+    /// Create a new hot loader with default paths
+    pub fn new() -> Self {
+        let home = dirs_home().unwrap_or_else(|| PathBuf::from("."));
+        Self {
+            claude_settings_path: home.join(".claude").join("settings.json"),
+            skills_dir: home.join(".claude").join("skills"),
+            agents_dir: home.join(".claude").join("agents"),
+            mcp_dir: home.join(".claude").join("mcp-servers"),
+            jarvis_capabilities_dir: home.join(".jarvis").join("capabilities"),
+        }
+    }
+
+    /// Create with custom paths
+    pub fn with_paths(
+        claude_settings: PathBuf,
+        skills_dir: PathBuf,
+        agents_dir: PathBuf,
+    ) -> Self {
+        let home = dirs_home().unwrap_or_else(|| PathBuf::from("."));
+        Self {
+            claude_settings_path: claude_settings,
+            skills_dir,
+            agents_dir,
+            mcp_dir: home.join(".claude").join("mcp-servers"),
+            jarvis_capabilities_dir: home.join(".jarvis").join("capabilities"),
+        }
+    }
+
+    /// Register an MCP capability
+    ///
+    /// This involves:
+    /// 1. Copying MCP server code to ~/.claude/mcp-servers/{name}/
+    /// 2. Running npm install in the MCP directory
+    /// 3. Updating ~/.claude/settings.json with the MCP configuration
+    /// 4. Returning that a restart is required
+    pub fn register_mcp(&self, capability: &SynthesizedCapability) -> Result<LoadResult> {
+        info!("Registering MCP: {}", capability.name);
+
+        // Ensure MCP directory exists
+        let mcp_dest = self.mcp_dir.join(&capability.name);
+        fs::create_dir_all(&mcp_dest).context("Failed to create MCP destination directory")?;
+
+        // Copy MCP server files
+        if capability.path.is_dir() {
+            copy_dir_recursive(&capability.path, &mcp_dest)?;
+        } else if capability.path.is_file() {
+            let dest_file = mcp_dest.join(capability.path.file_name().unwrap_or_default());
+            fs::copy(&capability.path, &dest_file)?;
+        }
+        debug!("Copied MCP files to {:?}", mcp_dest);
+
+        // Check if package.json exists and run npm install
+        let package_json = mcp_dest.join("package.json");
+        if package_json.exists() {
+            info!("Running npm install for MCP: {}", capability.name);
+            let output = Command::new("npm")
+                .arg("install")
+                .current_dir(&mcp_dest)
+                .output();
+
+            match output {
+                Ok(out) if out.status.success() => {
+                    debug!("npm install succeeded for MCP: {}", capability.name);
+                }
+                Ok(out) => {
+                    let stderr = String::from_utf8_lossy(&out.stderr);
+                    warn!("npm install failed for MCP {}: {}", capability.name, stderr);
+                }
+                Err(e) => {
+                    warn!("Failed to run npm install for MCP {}: {}", capability.name, e);
+                }
+            }
+        }
+
+        // Update Claude settings
+        let mcp_config = self.create_mcp_config(&capability.name, &mcp_dest)?;
+        self.update_claude_settings_mcp(&capability.name, &mcp_config)?;
+
+        let config_json = serde_json::to_value(&mcp_config)?;
+
+        Ok(LoadResult::requires_restart(format!(
+            "MCP '{}' registered at {:?}. Restart Claude Code to activate.",
+            capability.name, mcp_dest
+        ))
+        .with_path(mcp_dest)
+        .with_config(config_json))
+    }
+
+    /// Create MCP configuration for Claude settings
+    fn create_mcp_config(&self, name: &str, mcp_path: &PathBuf) -> Result<McpServerConfig> {
+        // Determine the entry point
+        let index_ts = mcp_path.join("src").join("index.ts");
+        let index_js = mcp_path.join("dist").join("index.js");
+        let main_js = mcp_path.join("index.js");
+
+        let (command, args) = if index_js.exists() {
+            ("node".to_string(), vec![index_js.display().to_string()])
+        } else if main_js.exists() {
+            ("node".to_string(), vec![main_js.display().to_string()])
+        } else if index_ts.exists() {
+            (
+                "npx".to_string(),
+                vec!["tsx".to_string(), index_ts.display().to_string()],
+            )
+        } else {
+            // Default to running via npm start
+            ("npm".to_string(), vec!["start".to_string()])
+        };
+
+        Ok(McpServerConfig {
+            command,
+            args,
+            env: HashMap::new(),
+        })
+    }
+
+    /// Update Claude settings with MCP configuration
+    fn update_claude_settings_mcp(&self, name: &str, config: &McpServerConfig) -> Result<()> {
+        // Ensure parent directory exists
+        if let Some(parent) = self.claude_settings_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+
+        // Read existing settings or create new
+        let mut settings: serde_json::Value = if self.claude_settings_path.exists() {
+            let content = fs::read_to_string(&self.claude_settings_path)?;
+            serde_json::from_str(&content).unwrap_or_else(|_| serde_json::json!({}))
+        } else {
+            serde_json::json!({})
+        };
+
+        // Ensure mcpServers object exists
+        if !settings.get("mcpServers").is_some() {
+            settings["mcpServers"] = serde_json::json!({});
+        }
+
+        // Add the MCP server configuration
+        settings["mcpServers"][name] = serde_json::json!({
+            "command": config.command,
+            "args": config.args,
+            "env": config.env
+        });
+
+        // Write back
+        let content = serde_json::to_string_pretty(&settings)?;
+        fs::write(&self.claude_settings_path, content)?;
+
+        info!(
+            "Updated Claude settings with MCP '{}' at {:?}",
+            name, self.claude_settings_path
+        );
+
+        Ok(())
+    }
+
+    /// Register a skill capability
+    ///
+    /// Skills are simple markdown files that Claude Code picks up automatically.
+    /// No restart required.
+    pub fn register_skill(&self, capability: &SynthesizedCapability) -> Result<LoadResult> {
+        info!("Registering skill: {}", capability.name);
+
+        // Skills can be loaded without restart
+        fs::create_dir_all(&self.skills_dir).context("Failed to create skills directory")?;
+
+        // Determine destination filename
+        let filename = if capability.name.ends_with(".SKILL.md") {
+            capability.name.clone()
+        } else {
+            format!("{}.SKILL.md", capability.name)
+        };
+        let dest = self.skills_dir.join(&filename);
+
+        // Copy the skill file
+        if capability.path.is_file() {
+            fs::copy(&capability.path, &dest).context("Failed to copy skill file")?;
+        } else if capability.path.is_dir() {
+            // If it's a directory, look for the skill file inside
+            let skill_file = capability.path.join(format!("{}.SKILL.md", capability.name));
+            if skill_file.exists() {
+                fs::copy(&skill_file, &dest)?;
+            } else {
+                return Err(anyhow::anyhow!(
+                    "Could not find skill file in directory {:?}",
+                    capability.path
+                ));
+            }
+        } else {
+            return Err(anyhow::anyhow!(
+                "Skill path does not exist: {:?}",
+                capability.path
+            ));
+        }
+
+        debug!("Skill installed at {:?}", dest);
+
+        Ok(LoadResult::success(format!(
+            "Skill '{}' registered and active at {:?}",
+            capability.name, dest
+        ))
+        .with_path(dest))
+    }
+
+    /// Register an agent capability
+    ///
+    /// Agents are markdown files similar to skills.
+    /// No restart required.
+    pub fn register_agent(&self, capability: &SynthesizedCapability) -> Result<LoadResult> {
+        info!("Registering agent: {}", capability.name);
+
+        // Agents can be loaded without restart
+        fs::create_dir_all(&self.agents_dir).context("Failed to create agents directory")?;
+
+        // Determine destination filename
+        let filename = if capability.name.ends_with(".AGENT.md") {
+            capability.name.clone()
+        } else {
+            format!("{}.AGENT.md", capability.name)
+        };
+        let dest = self.agents_dir.join(&filename);
+
+        // Copy the agent file
+        if capability.path.is_file() {
+            fs::copy(&capability.path, &dest).context("Failed to copy agent file")?;
+        } else if capability.path.is_dir() {
+            let agent_file = capability.path.join(format!("{}.AGENT.md", capability.name));
+            if agent_file.exists() {
+                fs::copy(&agent_file, &dest)?;
+            } else {
+                return Err(anyhow::anyhow!(
+                    "Could not find agent file in directory {:?}",
+                    capability.path
+                ));
+            }
+        } else {
+            return Err(anyhow::anyhow!(
+                "Agent path does not exist: {:?}",
+                capability.path
+            ));
+        }
+
+        debug!("Agent installed at {:?}", dest);
+
+        Ok(LoadResult::success(format!(
+            "Agent '{}' registered and active at {:?}",
+            capability.name, dest
+        ))
+        .with_path(dest))
+    }
+
+    /// Register any capability based on its type
+    pub fn register(&self, capability: &SynthesizedCapability) -> Result<LoadResult> {
+        match capability.capability_type {
+            CapabilityType::Mcp => self.register_mcp(capability),
+            CapabilityType::Skill => self.register_skill(capability),
+            CapabilityType::Agent => self.register_agent(capability),
+        }
+    }
+
+    /// Load a capability (alias for register)
+    ///
+    /// This is the method called by task_loop and swarm coordinator to install
+    /// synthesized capabilities at runtime.
+    pub fn load(&self, capability: &SynthesizedCapability) -> Result<LoadResult> {
+        self.register(capability)
+    }
+
+    /// Unregister an MCP capability
+    pub fn unregister_mcp(&self, name: &str) -> Result<LoadResult> {
+        // Remove from settings
+        if self.claude_settings_path.exists() {
+            let content = fs::read_to_string(&self.claude_settings_path)?;
+            let mut settings: serde_json::Value = serde_json::from_str(&content)?;
+
+            if let Some(mcp_servers) = settings.get_mut("mcpServers") {
+                if let Some(obj) = mcp_servers.as_object_mut() {
+                    obj.remove(name);
+                }
+            }
+
+            let content = serde_json::to_string_pretty(&settings)?;
+            fs::write(&self.claude_settings_path, content)?;
+        }
+
+        // Remove MCP directory
+        let mcp_path = self.mcp_dir.join(name);
+        if mcp_path.exists() {
+            fs::remove_dir_all(&mcp_path)?;
+        }
+
+        Ok(LoadResult::requires_restart(format!(
+            "MCP '{}' unregistered. Restart Claude Code to complete removal.",
+            name
+        )))
+    }
+
+    /// Unregister a skill capability
+    pub fn unregister_skill(&self, name: &str) -> Result<LoadResult> {
+        let filename = if name.ends_with(".SKILL.md") {
+            name.to_string()
+        } else {
+            format!("{}.SKILL.md", name)
+        };
+        let path = self.skills_dir.join(&filename);
+
+        if path.exists() {
+            fs::remove_file(&path)?;
+            Ok(LoadResult::success(format!("Skill '{}' unregistered", name)))
+        } else {
+            Ok(LoadResult::failure(format!(
+                "Skill '{}' not found at {:?}",
+                name, path
+            )))
+        }
+    }
+
+    /// Unregister an agent capability
+    pub fn unregister_agent(&self, name: &str) -> Result<LoadResult> {
+        let filename = if name.ends_with(".AGENT.md") {
+            name.to_string()
+        } else {
+            format!("{}.AGENT.md", name)
+        };
+        let path = self.agents_dir.join(&filename);
+
+        if path.exists() {
+            fs::remove_file(&path)?;
+            Ok(LoadResult::success(format!("Agent '{}' unregistered", name)))
+        } else {
+            Ok(LoadResult::failure(format!(
+                "Agent '{}' not found at {:?}",
+                name, path
+            )))
+        }
+    }
+
+    /// List all installed skills
+    pub fn list_skills(&self) -> Result<Vec<String>> {
+        if !self.skills_dir.exists() {
+            return Ok(Vec::new());
+        }
+
+        let mut skills = Vec::new();
+        for entry in fs::read_dir(&self.skills_dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.is_file() {
+                if let Some(name) = path.file_name() {
+                    let name = name.to_string_lossy();
+                    if name.ends_with(".SKILL.md") {
+                        skills.push(name.trim_end_matches(".SKILL.md").to_string());
+                    }
+                }
+            }
+        }
+        Ok(skills)
+    }
+
+    /// List all installed agents
+    pub fn list_agents(&self) -> Result<Vec<String>> {
+        if !self.agents_dir.exists() {
+            return Ok(Vec::new());
+        }
+
+        let mut agents = Vec::new();
+        for entry in fs::read_dir(&self.agents_dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.is_file() {
+                if let Some(name) = path.file_name() {
+                    let name = name.to_string_lossy();
+                    if name.ends_with(".AGENT.md") {
+                        agents.push(name.trim_end_matches(".AGENT.md").to_string());
+                    }
+                }
+            }
+        }
+        Ok(agents)
+    }
+
+    /// List all registered MCPs
+    pub fn list_mcps(&self) -> Result<Vec<String>> {
+        if !self.claude_settings_path.exists() {
+            return Ok(Vec::new());
+        }
+
+        let content = fs::read_to_string(&self.claude_settings_path)?;
+        let settings: serde_json::Value = serde_json::from_str(&content)?;
+
+        let mut mcps = Vec::new();
+        if let Some(mcp_servers) = settings.get("mcpServers") {
+            if let Some(obj) = mcp_servers.as_object() {
+                for key in obj.keys() {
+                    mcps.push(key.clone());
+                }
+            }
+        }
+        Ok(mcps)
+    }
+
+    /// Reload Claude config (signal that changes were made)
+    ///
+    /// Note: This is a no-op for now as Claude Code doesn't support hot reloading.
+    /// The user must restart Claude Code manually for MCP changes.
+    pub fn reload_claude_config(&self) -> Result<()> {
+        info!("Claude config reload requested - manual restart required for MCPs");
+        Ok(())
+    }
+
+    /// Get claude settings path
+    pub fn claude_settings_path(&self) -> &PathBuf {
+        &self.claude_settings_path
+    }
+
+    /// Get skills directory
+    pub fn skills_dir(&self) -> &PathBuf {
+        &self.skills_dir
+    }
+
+    /// Get agents directory
+    pub fn agents_dir(&self) -> &PathBuf {
+        &self.agents_dir
+    }
+
+    /// Get MCP directory
+    pub fn mcp_dir(&self) -> &PathBuf {
+        &self.mcp_dir
+    }
+}
+
+/// Get home directory
+fn dirs_home() -> Option<PathBuf> {
+    std::env::var("HOME")
+        .ok()
+        .map(PathBuf::from)
+        .or_else(|| std::env::var("USERPROFILE").ok().map(PathBuf::from))
+}
+
+/// Recursively copy a directory
+fn copy_dir_recursive(src: &PathBuf, dst: &PathBuf) -> Result<()> {
+    fs::create_dir_all(dst)?;
+
+    for entry in fs::read_dir(src)? {
+        let entry = entry?;
+        let src_path = entry.path();
+        let dst_path = dst.join(entry.file_name());
+
+        if src_path.is_dir() {
+            // Skip node_modules and other common excluded directories
+            let name = entry.file_name();
+            let name_str = name.to_string_lossy();
+            if matches!(
+                name_str.as_ref(),
+                "node_modules" | ".git" | "target" | "dist" | "build"
+            ) {
+                continue;
+            }
+            copy_dir_recursive(&src_path, &dst_path)?;
+        } else {
+            fs::copy(&src_path, &dst_path)?;
+        }
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[test]
+    fn test_load_result_success() {
+        let result = LoadResult::success("test");
+        assert!(result.success);
+        assert!(!result.restart_required);
+    }
+
+    #[test]
+    fn test_load_result_requires_restart() {
+        let result = LoadResult::requires_restart("test");
+        assert!(result.success);
+        assert!(result.restart_required);
+    }
+
+    #[test]
+    fn test_load_result_failure() {
+        let result = LoadResult::failure("test");
+        assert!(!result.success);
+    }
+
+    #[test]
+    fn test_load_result_with_path() {
+        let result = LoadResult::success("test").with_path(PathBuf::from("/tmp/skill.md"));
+        assert_eq!(result.installed_path, Some(PathBuf::from("/tmp/skill.md")));
+    }
+
+    #[test]
+    fn test_hot_loader_new() {
+        let loader = HotLoader::new();
+        assert!(loader
+            .claude_settings_path
+            .to_string_lossy()
+            .contains("claude"));
+    }
+
+    #[test]
+    fn test_hot_loader_with_paths() {
+        let loader = HotLoader::with_paths(
+            PathBuf::from("/tmp/settings.json"),
+            PathBuf::from("/tmp/skills"),
+            PathBuf::from("/tmp/agents"),
+        );
+        assert_eq!(loader.skills_dir, PathBuf::from("/tmp/skills"));
+    }
+
+    #[test]
+    fn test_register_skill() {
+        let temp_dir = TempDir::new().unwrap();
+        let skills_dir = temp_dir.path().join("skills");
+        let source_dir = temp_dir.path().join("source");
+        fs::create_dir_all(&source_dir).unwrap();
+
+        // Create a source skill file
+        let skill_content = "# Test Skill\n\n## Instructions\nTest instructions\n";
+        let source_skill = source_dir.join("test-skill.SKILL.md");
+        fs::write(&source_skill, skill_content).unwrap();
+
+        let loader = HotLoader::with_paths(
+            temp_dir.path().join("settings.json"),
+            skills_dir.clone(),
+            temp_dir.path().join("agents"),
+        );
+
+        let capability = SynthesizedCapability::new(
+            CapabilityType::Skill,
+            "test-skill",
+            source_skill,
+        );
+
+        let result = loader.register_skill(&capability).unwrap();
+        assert!(result.success);
+        assert!(!result.restart_required);
+
+        // Verify the skill was copied
+        let installed_skill = skills_dir.join("test-skill.SKILL.md");
+        assert!(installed_skill.exists());
+        let installed_content = fs::read_to_string(&installed_skill).unwrap();
+        assert_eq!(installed_content, skill_content);
+    }
+
+    #[test]
+    fn test_register_agent() {
+        let temp_dir = TempDir::new().unwrap();
+        let agents_dir = temp_dir.path().join("agents");
+        let source_dir = temp_dir.path().join("source");
+        fs::create_dir_all(&source_dir).unwrap();
+
+        // Create a source agent file
+        let agent_content = "# Test Agent\n\n## Specialization\nTest spec\n";
+        let source_agent = source_dir.join("test-agent.AGENT.md");
+        fs::write(&source_agent, agent_content).unwrap();
+
+        let loader = HotLoader::with_paths(
+            temp_dir.path().join("settings.json"),
+            temp_dir.path().join("skills"),
+            agents_dir.clone(),
+        );
+
+        let capability = SynthesizedCapability::new(
+            CapabilityType::Agent,
+            "test-agent",
+            source_agent,
+        );
+
+        let result = loader.register_agent(&capability).unwrap();
+        assert!(result.success);
+        assert!(!result.restart_required);
+
+        // Verify the agent was copied
+        let installed_agent = agents_dir.join("test-agent.AGENT.md");
+        assert!(installed_agent.exists());
+    }
+
+    #[test]
+    fn test_list_skills() {
+        let temp_dir = TempDir::new().unwrap();
+        let skills_dir = temp_dir.path().join("skills");
+        fs::create_dir_all(&skills_dir).unwrap();
+
+        // Create some skill files
+        fs::write(skills_dir.join("skill1.SKILL.md"), "# Skill 1").unwrap();
+        fs::write(skills_dir.join("skill2.SKILL.md"), "# Skill 2").unwrap();
+
+        let loader = HotLoader::with_paths(
+            temp_dir.path().join("settings.json"),
+            skills_dir,
+            temp_dir.path().join("agents"),
+        );
+
+        let skills = loader.list_skills().unwrap();
+        assert_eq!(skills.len(), 2);
+        assert!(skills.contains(&"skill1".to_string()));
+        assert!(skills.contains(&"skill2".to_string()));
+    }
+
+    #[test]
+    fn test_unregister_skill() {
+        let temp_dir = TempDir::new().unwrap();
+        let skills_dir = temp_dir.path().join("skills");
+        fs::create_dir_all(&skills_dir).unwrap();
+
+        // Create a skill file
+        let skill_path = skills_dir.join("test-skill.SKILL.md");
+        fs::write(&skill_path, "# Test Skill").unwrap();
+        assert!(skill_path.exists());
+
+        let loader = HotLoader::with_paths(
+            temp_dir.path().join("settings.json"),
+            skills_dir,
+            temp_dir.path().join("agents"),
+        );
+
+        let result = loader.unregister_skill("test-skill").unwrap();
+        assert!(result.success);
+        assert!(!skill_path.exists());
+    }
+
+    #[test]
+    fn test_update_claude_settings_mcp() {
+        let temp_dir = TempDir::new().unwrap();
+        let settings_path = temp_dir.path().join(".claude").join("settings.json");
+
+        let loader = HotLoader::with_paths(
+            settings_path.clone(),
+            temp_dir.path().join("skills"),
+            temp_dir.path().join("agents"),
+        );
+
+        let config = McpServerConfig {
+            command: "node".to_string(),
+            args: vec!["/path/to/server.js".to_string()],
+            env: HashMap::new(),
+        };
+
+        loader.update_claude_settings_mcp("test-mcp", &config).unwrap();
+
+        // Verify the settings were written
+        assert!(settings_path.exists());
+        let content = fs::read_to_string(&settings_path).unwrap();
+        let settings: serde_json::Value = serde_json::from_str(&content).unwrap();
+
+        assert!(settings["mcpServers"]["test-mcp"].is_object());
+        assert_eq!(settings["mcpServers"]["test-mcp"]["command"], "node");
+    }
+
+    #[test]
+    fn test_copy_dir_recursive() {
+        let temp_dir = TempDir::new().unwrap();
+        let src = temp_dir.path().join("src");
+        let dst = temp_dir.path().join("dst");
+
+        // Create source structure
+        fs::create_dir_all(src.join("subdir")).unwrap();
+        fs::write(src.join("file1.js"), "content1").unwrap();
+        fs::write(src.join("subdir").join("file2.js"), "content2").unwrap();
+        fs::create_dir_all(src.join("node_modules")).unwrap();
+        fs::write(src.join("node_modules").join("skip.js"), "skip").unwrap();
+
+        copy_dir_recursive(&src, &dst).unwrap();
+
+        // Verify files were copied
+        assert!(dst.join("file1.js").exists());
+        assert!(dst.join("subdir").join("file2.js").exists());
+        // Verify node_modules was skipped
+        assert!(!dst.join("node_modules").exists());
+    }
+}

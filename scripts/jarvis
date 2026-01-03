@@ -1,0 +1,1084 @@
+#!/bin/bash
+#
+# jarvis - Bash wrapper for jarvis-rs
+#
+# Usage:
+#   jarvis "your task description"
+#   jarvis "task" --max-iterations 20 --promise "DONE"
+#   jarvis "task" --output-format json --quiet
+#   jarvis "task" --checkpoint ./state.json
+#   jarvis status                    # Show current task status
+#   jarvis resume [checkpoint]       # Resume from checkpoint
+#   jarvis history                   # Show execution history
+#   jarvis completions <shell>       # Generate shell completions
+#   jarvis --install                 # Install to /usr/local/bin
+#   jarvis --help
+#
+# Environment variables:
+#   JARVIS_MODEL       - Model to use (e.g., claude-opus-4-5-20251101)
+#   JARVIS_MAX_ITER    - Default max iterations (default: 10)
+#   JARVIS_VERBOSE     - Enable verbose logging (set to 1)
+#   JARVIS_QUIET       - Enable quiet mode (set to 1)
+#   JARVIS_OUTPUT_FMT  - Output format (text, json, markdown)
+#   JARVIS_NO_COLOR    - Disable colored output (set to 1)
+#   JARVIS_HOME        - Jarvis data directory (default: ~/.jarvis)
+#
+
+set -euo pipefail
+
+# ============================================================================
+# Error Handling
+# ============================================================================
+
+# Trap for cleanup on errors
+trap 'handle_error $? $LINENO' ERR
+trap 'handle_interrupt' INT TERM
+
+handle_error() {
+    local exit_code="$1"
+    local line_number="$2"
+
+    # Don't show error for expected exits
+    if [[ "$exit_code" -eq 0 ]]; then
+        return
+    fi
+
+    echo "" >&2
+    echo -e "${RED:-}Error occurred at line $line_number (exit code: $exit_code)${NC:-}" >&2
+
+    # Cleanup working file if it exists
+    if [[ -f "$(pwd)/.jarvis-working" ]]; then
+        rm -f "$(pwd)/.jarvis-working" 2>/dev/null || true
+    fi
+
+    exit "$exit_code"
+}
+
+handle_interrupt() {
+    echo "" >&2
+    echo -e "${YELLOW:-}Interrupted by user${NC:-}" >&2
+
+    # Cleanup working file
+    if [[ -f "$(pwd)/.jarvis-working" ]]; then
+        rm -f "$(pwd)/.jarvis-working" 2>/dev/null || true
+    fi
+
+    exit 130
+}
+
+# Resolve the script directory (with error handling for edge cases)
+resolve_script_dir() {
+    local source="${BASH_SOURCE[0]}"
+
+    # Handle symlinks
+    while [[ -L "$source" ]]; do
+        local dir="$(cd -P "$(dirname "$source")" && pwd)"
+        source="$(readlink "$source")"
+        # Handle relative symlinks
+        [[ "$source" != /* ]] && source="$dir/$source"
+    done
+
+    cd -P "$(dirname "$source")" && pwd
+}
+
+SCRIPT_DIR="$(resolve_script_dir)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# Validate project root exists
+if [[ ! -d "$PROJECT_ROOT" ]]; then
+    echo "Error: Project root not found at $PROJECT_ROOT" >&2
+    exit 1
+fi
+
+# Configuration with validation
+JARVIS_HOME="${JARVIS_HOME:-$HOME/.jarvis}"
+HISTORY_FILE="$JARVIS_HOME/history.jsonl"
+CHECKPOINT_DIR="$JARVIS_HOME/checkpoints"
+FIRST_RUN_FILE="$JARVIS_HOME/.first_run_complete"
+
+# Binary location
+BINARY="$PROJECT_ROOT/target/release/jarvis-rs"
+
+# Colors for output (with fallback for non-color terminals)
+if [[ "${JARVIS_NO_COLOR:-0}" == "1" ]] || [[ ! -t 1 ]]; then
+    RED=''
+    GREEN=''
+    YELLOW=''
+    BLUE=''
+    CYAN=''
+    NC=''
+else
+    RED='\033[0;31m'
+    GREEN='\033[0;32m'
+    YELLOW='\033[1;33m'
+    BLUE='\033[0;34m'
+    CYAN='\033[0;36m'
+    NC='\033[0m'
+fi
+
+# ============================================================================
+# Helper Functions
+# ============================================================================
+
+print_success() {
+    echo -e "${GREEN}✅ $1${NC}"
+}
+
+print_error() {
+    echo -e "${RED}❌ $1${NC}" >&2
+}
+
+print_warning() {
+    echo -e "${YELLOW}⚠️  $1${NC}"
+}
+
+print_info() {
+    echo -e "${BLUE}ℹ️  $1${NC}"
+}
+
+ensure_jarvis_home() {
+    if ! mkdir -p "$JARVIS_HOME" 2>/dev/null; then
+        print_error "Cannot create JARVIS_HOME directory: $JARVIS_HOME"
+        return 1
+    fi
+    if ! mkdir -p "$CHECKPOINT_DIR" 2>/dev/null; then
+        print_error "Cannot create checkpoint directory: $CHECKPOINT_DIR"
+        return 1
+    fi
+}
+
+# ============================================================================
+# Input Validation
+# ============================================================================
+
+validate_positive_integer() {
+    local value="$1"
+    local name="$2"
+
+    if [[ ! "$value" =~ ^[0-9]+$ ]]; then
+        print_error "$name must be a positive integer, got: $value"
+        return 1
+    fi
+
+    if [[ "$value" -eq 0 ]]; then
+        print_error "$name must be greater than 0"
+        return 1
+    fi
+
+    return 0
+}
+
+validate_output_format() {
+    local format="$1"
+
+    case "$format" in
+        text|json|markdown)
+            return 0
+            ;;
+        *)
+            print_error "Invalid output format: $format"
+            echo "Valid formats: text, json, markdown" >&2
+            return 1
+            ;;
+    esac
+}
+
+validate_model() {
+    local model="$1"
+
+    # Basic validation - model should not be empty and should look reasonable
+    if [[ -z "$model" ]]; then
+        print_error "Model name cannot be empty"
+        return 1
+    fi
+
+    # Check for obviously invalid characters
+    if [[ "$model" =~ [[:space:]] ]]; then
+        print_error "Model name contains invalid whitespace: $model"
+        return 1
+    fi
+
+    return 0
+}
+
+validate_directory() {
+    local dir="$1"
+    local name="${2:-directory}"
+
+    if [[ ! -d "$dir" ]]; then
+        print_error "$name does not exist: $dir"
+        return 1
+    fi
+
+    if [[ ! -r "$dir" ]]; then
+        print_error "$name is not readable: $dir"
+        return 1
+    fi
+
+    return 0
+}
+
+validate_file_path() {
+    local file="$1"
+    local name="${2:-file}"
+
+    # Check if parent directory exists
+    local parent_dir="$(dirname "$file")"
+    if [[ ! -d "$parent_dir" ]]; then
+        print_error "Parent directory for $name does not exist: $parent_dir"
+        return 1
+    fi
+
+    # Check if parent directory is writable (for new files)
+    if [[ ! -w "$parent_dir" ]] && [[ ! -f "$file" ]]; then
+        print_error "Cannot create $name - directory not writable: $parent_dir"
+        return 1
+    fi
+
+    return 0
+}
+
+validate_environment_variables() {
+    local has_errors=0
+
+    # Validate JARVIS_MAX_ITER if set
+    if [[ -n "${JARVIS_MAX_ITER:-}" ]]; then
+        if ! validate_positive_integer "$JARVIS_MAX_ITER" "JARVIS_MAX_ITER"; then
+            has_errors=1
+        fi
+    fi
+
+    # Validate JARVIS_OUTPUT_FMT if set
+    if [[ -n "${JARVIS_OUTPUT_FMT:-}" ]]; then
+        if ! validate_output_format "$JARVIS_OUTPUT_FMT"; then
+            has_errors=1
+        fi
+    fi
+
+    # Validate JARVIS_MODEL if set
+    if [[ -n "${JARVIS_MODEL:-}" ]]; then
+        if ! validate_model "$JARVIS_MODEL"; then
+            has_errors=1
+        fi
+    fi
+
+    # Validate JARVIS_HOME if custom
+    if [[ "${JARVIS_HOME:-}" != "$HOME/.jarvis" ]] && [[ -n "${JARVIS_HOME:-}" ]]; then
+        local parent_dir="$(dirname "$JARVIS_HOME")"
+        if [[ ! -d "$parent_dir" ]]; then
+            print_error "JARVIS_HOME parent directory does not exist: $parent_dir"
+            has_errors=1
+        fi
+    fi
+
+    # Validate boolean environment variables
+    for var in JARVIS_VERBOSE JARVIS_QUIET JARVIS_NO_COLOR; do
+        local value="${!var:-}"
+        if [[ -n "$value" ]] && [[ "$value" != "0" ]] && [[ "$value" != "1" ]]; then
+            print_warning "$var should be 0 or 1, got: $value (treating as enabled)"
+        fi
+    done
+
+    # Validate JARVIS_TIMEOUT if set
+    if [[ -n "${JARVIS_TIMEOUT:-}" ]]; then
+        if ! validate_positive_integer "$JARVIS_TIMEOUT" "JARVIS_TIMEOUT"; then
+            has_errors=1
+        fi
+    fi
+
+    return $has_errors
+}
+
+# Check for required dependencies
+check_dependencies() {
+    local missing_deps=()
+
+    # Required: jq for JSON processing
+    if ! command -v jq &> /dev/null; then
+        missing_deps+=("jq (for JSON processing)")
+    fi
+
+    # Cargo is needed for building
+    if [[ ! -x "$BINARY" ]] && ! command -v cargo &> /dev/null; then
+        missing_deps+=("cargo (for building jarvis-rs)")
+    fi
+
+    if [[ ${#missing_deps[@]} -gt 0 ]]; then
+        print_error "Missing required dependencies:"
+        for dep in "${missing_deps[@]}"; do
+            echo "  - $dep" >&2
+        done
+        return 1
+    fi
+
+    return 0
+}
+
+# ============================================================================
+# First Run Setup
+# ============================================================================
+
+check_first_run() {
+    ensure_jarvis_home
+
+    if [[ ! -f "$FIRST_RUN_FILE" ]]; then
+        echo ""
+        echo -e "${CYAN}╔═══════════════════════════════════════════════════════════════╗${NC}"
+        echo -e "${CYAN}║           Welcome to Jarvis-RS! 🤖                            ║${NC}"
+        echo -e "${CYAN}╚═══════════════════════════════════════════════════════════════╝${NC}"
+        echo ""
+
+        # Check if script is in PATH
+        if ! command -v jarvis &> /dev/null; then
+            print_warning "jarvis is not in your PATH"
+            echo ""
+            echo "To add jarvis to your PATH, you can either:"
+            echo ""
+            echo "  1. Add the scripts directory to your PATH:"
+            echo -e "     ${CYAN}export PATH=\"\$PATH:$SCRIPT_DIR\"${NC}"
+            echo ""
+            echo "  2. Or install jarvis system-wide:"
+            echo -e "     ${CYAN}$0 --install${NC}"
+            echo ""
+            echo "  3. Or add to your shell profile (~/.bashrc or ~/.zshrc):"
+            echo -e "     ${CYAN}echo 'export PATH=\"\$PATH:$SCRIPT_DIR\"' >> ~/.bashrc${NC}"
+            echo ""
+        fi
+
+        # Check for claude CLI
+        if ! command -v claude &> /dev/null; then
+            print_warning "claude CLI not found"
+            echo ""
+            echo "Jarvis requires the Claude CLI to be installed."
+            echo "Visit: https://docs.anthropic.com/en/docs/claude-cli"
+            echo ""
+        fi
+
+        touch "$FIRST_RUN_FILE"
+        echo ""
+    fi
+}
+
+# ============================================================================
+# Status Command
+# ============================================================================
+
+cmd_status() {
+    local working_dir="${1:-.}"
+
+    echo ""
+    echo -e "${CYAN}═══════════════════════════════════════════════════════════════${NC}"
+    echo -e "${CYAN}  Jarvis Status${NC}"
+    echo -e "${CYAN}═══════════════════════════════════════════════════════════════${NC}"
+    echo ""
+
+    # Check for active signal files
+    local satisfied_file="$working_dir/.jarvis-satisfied"
+    local continue_file="$working_dir/.jarvis-continue"
+    local blocked_file="$working_dir/.jarvis-blocked"
+    local working_file="$working_dir/.jarvis-working"
+
+    if [[ -f "$satisfied_file" ]]; then
+        print_success "Task completed!"
+        echo ""
+        echo "Summary:"
+        cat "$satisfied_file"
+        echo ""
+    elif [[ -f "$blocked_file" ]]; then
+        print_error "Task blocked!"
+        echo ""
+        echo "Reason:"
+        cat "$blocked_file"
+        echo ""
+    elif [[ -f "$continue_file" ]]; then
+        print_warning "Task in progress (needs continuation)"
+        echo ""
+        echo "Notes:"
+        cat "$continue_file"
+        echo ""
+    elif [[ -f "$working_file" ]]; then
+        print_info "Task currently running..."
+        if [[ -f "$working_file" ]]; then
+            echo ""
+            echo "Task:"
+            cat "$working_file"
+        fi
+    else
+        print_info "No active task"
+    fi
+
+    # Check for checkpoints
+    local checkpoint_count=0
+    if [[ -d "$working_dir/.jarvis-checkpoints" ]]; then
+        checkpoint_count=$(find "$working_dir/.jarvis-checkpoints" -name "*.json" 2>/dev/null | wc -l | tr -d ' ')
+    fi
+
+    if [[ "$checkpoint_count" -gt 0 ]]; then
+        echo ""
+        echo "Checkpoints available: $checkpoint_count"
+        echo "Use 'jarvis resume' to continue from a checkpoint"
+    fi
+
+    # Show recent history
+    if [[ -f "$HISTORY_FILE" ]]; then
+        local history_count=$(wc -l < "$HISTORY_FILE" | tr -d ' ')
+        if [[ "$history_count" -gt 0 ]]; then
+            echo ""
+            echo "Total executions in history: $history_count"
+            echo "Use 'jarvis history' for details"
+        fi
+    fi
+
+    echo ""
+}
+
+# ============================================================================
+# Resume Command
+# ============================================================================
+
+cmd_resume() {
+    local checkpoint_arg="${1:-latest}"
+    local working_dir="."
+
+    echo ""
+    echo -e "${CYAN}═══════════════════════════════════════════════════════════════${NC}"
+    echo -e "${CYAN}  Resume from Checkpoint${NC}"
+    echo -e "${CYAN}═══════════════════════════════════════════════════════════════${NC}"
+    echo ""
+
+    local checkpoint_dir="$working_dir/.jarvis-checkpoints"
+
+    if [[ ! -d "$checkpoint_dir" ]]; then
+        print_error "No checkpoints found in current directory"
+        echo ""
+        echo "Checkpoints are stored in .jarvis-checkpoints/"
+        echo "Run a task first to create checkpoints."
+        return 1
+    fi
+
+    local checkpoint_file=""
+
+    if [[ "$checkpoint_arg" == "latest" ]]; then
+        # Find the most recent checkpoint
+        checkpoint_file=$(find "$checkpoint_dir" -name "*.json" -type f 2>/dev/null | sort -r | head -1)
+        if [[ -z "$checkpoint_file" ]]; then
+            print_error "No checkpoints found"
+            return 1
+        fi
+        print_info "Using latest checkpoint: $(basename "$checkpoint_file")"
+    elif [[ -f "$checkpoint_dir/$checkpoint_arg" ]]; then
+        checkpoint_file="$checkpoint_dir/$checkpoint_arg"
+    elif [[ -f "$checkpoint_dir/checkpoint_$checkpoint_arg.json" ]]; then
+        checkpoint_file="$checkpoint_dir/checkpoint_$checkpoint_arg.json"
+    elif [[ -f "$checkpoint_arg" ]]; then
+        checkpoint_file="$checkpoint_arg"
+    else
+        print_error "Checkpoint not found: $checkpoint_arg"
+        echo ""
+        echo "Available checkpoints:"
+        ls -1 "$checkpoint_dir" 2>/dev/null || echo "  (none)"
+        return 1
+    fi
+
+    echo ""
+    echo "Checkpoint contents:"
+    echo "─────────────────────────────────────────────────────────────────"
+    cat "$checkpoint_file"
+    echo ""
+    echo "─────────────────────────────────────────────────────────────────"
+    echo ""
+
+    # Extract task and iteration from checkpoint
+    local task=$(jq -r '.task // empty' "$checkpoint_file" 2>/dev/null)
+    local iteration=$(jq -r '.iteration // 0' "$checkpoint_file" 2>/dev/null)
+    local feedback=$(jq -r '.feedback // empty' "$checkpoint_file" 2>/dev/null)
+
+    if [[ -z "$task" ]]; then
+        print_error "Invalid checkpoint format (missing task)"
+        return 1
+    fi
+
+    print_info "Resuming task from iteration $iteration"
+    echo ""
+
+    # Build resume prompt
+    local resume_prompt="$task"
+    if [[ -n "$feedback" ]]; then
+        resume_prompt="$resume_prompt
+
+---
+**Resumed from checkpoint (iteration $iteration)**
+Previous feedback: $feedback
+Please continue from where you left off."
+    fi
+
+    # Execute with the resume prompt
+    exec "$0" "$resume_prompt"
+}
+
+# ============================================================================
+# History Command
+# ============================================================================
+
+cmd_history() {
+    local limit="${1:-10}"
+
+    echo ""
+    echo -e "${CYAN}═══════════════════════════════════════════════════════════════${NC}"
+    echo -e "${CYAN}  Execution History${NC}"
+    echo -e "${CYAN}═══════════════════════════════════════════════════════════════${NC}"
+    echo ""
+
+    if [[ ! -f "$HISTORY_FILE" ]]; then
+        print_info "No execution history found"
+        return 0
+    fi
+
+    local total=$(wc -l < "$HISTORY_FILE" | tr -d ' ')
+    echo "Showing last $limit of $total executions:"
+    echo ""
+
+    tail -n "$limit" "$HISTORY_FILE" | while IFS= read -r line; do
+        local timestamp=$(echo "$line" | jq -r '.timestamp // "unknown"' 2>/dev/null)
+        local task=$(echo "$line" | jq -r '.task // "unknown"' 2>/dev/null | cut -c1-50)
+        local success=$(echo "$line" | jq -r '.success // false' 2>/dev/null)
+        local iterations=$(echo "$line" | jq -r '.iterations // 0' 2>/dev/null)
+
+        if [[ "$success" == "true" ]]; then
+            echo -e "${GREEN}✅${NC} [$timestamp] $task... (${iterations} iterations)"
+        else
+            echo -e "${RED}❌${NC} [$timestamp] $task... (${iterations} iterations)"
+        fi
+    done
+
+    echo ""
+}
+
+# Record execution to history
+record_history() {
+    local task="$1"
+    local success="$2"
+    local iterations="$3"
+
+    ensure_jarvis_home
+
+    local timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+    local entry=$(jq -n \
+        --arg ts "$timestamp" \
+        --arg task "$task" \
+        --argjson success "$success" \
+        --argjson iter "$iterations" \
+        '{timestamp: $ts, task: $task, success: $success, iterations: $iter}')
+
+    echo "$entry" >> "$HISTORY_FILE"
+}
+
+# ============================================================================
+# Completions Command
+# ============================================================================
+
+cmd_completions() {
+    local shell="${1:-bash}"
+
+    case "$shell" in
+        bash)
+            cat << 'EOF'
+# Jarvis bash completion
+# Add to ~/.bashrc: eval "$(jarvis completions bash)"
+
+_jarvis_completions() {
+    local cur="${COMP_WORDS[COMP_CWORD]}"
+    local prev="${COMP_WORDS[COMP_CWORD-1]}"
+
+    # Commands
+    local commands="status resume history completions --help --install --version"
+
+    # Options
+    local options="--max-iterations --promise --dir --model --verbose --quiet --dry-run --output-format --checkpoint --no-color"
+
+    case "$prev" in
+        jarvis)
+            COMPREPLY=($(compgen -W "$commands $options" -- "$cur"))
+            ;;
+        resume)
+            # Complete checkpoint files
+            if [[ -d ".jarvis-checkpoints" ]]; then
+                local checkpoints=$(ls .jarvis-checkpoints/*.json 2>/dev/null | xargs -I{} basename {})
+                COMPREPLY=($(compgen -W "$checkpoints latest" -- "$cur"))
+            fi
+            ;;
+        completions)
+            COMPREPLY=($(compgen -W "bash zsh fish" -- "$cur"))
+            ;;
+        --dir|-d)
+            COMPREPLY=($(compgen -d -- "$cur"))
+            ;;
+        --model|-m)
+            COMPREPLY=($(compgen -W "claude-opus-4-5-20251101 claude-sonnet-4-20250514" -- "$cur"))
+            ;;
+        --max-iterations|-i)
+            COMPREPLY=($(compgen -W "5 10 15 20 30" -- "$cur"))
+            ;;
+        --output-format|-o)
+            COMPREPLY=($(compgen -W "text json markdown" -- "$cur"))
+            ;;
+        --checkpoint|-c)
+            COMPREPLY=($(compgen -f -- "$cur"))
+            ;;
+        *)
+            if [[ "$cur" == -* ]]; then
+                COMPREPLY=($(compgen -W "$options" -- "$cur"))
+            fi
+            ;;
+    esac
+}
+
+complete -F _jarvis_completions jarvis
+EOF
+            ;;
+        zsh)
+            cat << 'EOF'
+#compdef jarvis
+# Jarvis zsh completion
+# Add to ~/.zshrc: eval "$(jarvis completions zsh)"
+
+_jarvis() {
+    local -a commands options
+
+    commands=(
+        'status:Show current task status'
+        'resume:Resume from checkpoint'
+        'history:Show execution history'
+        'completions:Generate shell completions'
+    )
+
+    options=(
+        '--max-iterations[Maximum iterations]:count:(5 10 15 20 30)'
+        '--promise[Completion promise string]:string:'
+        '--dir[Working directory]:directory:_files -/'
+        '--model[Claude model]:model:(claude-opus-4-5-20251101 claude-sonnet-4-20250514)'
+        '--verbose[Enable verbose output]'
+        '--quiet[Suppress non-essential output]'
+        '--dry-run[Analyze without executing]'
+        '--output-format[Output format]:format:(text json markdown)'
+        '--checkpoint[Checkpoint file]:file:_files'
+        '--no-color[Disable colored output]'
+        '--install[Install to /usr/local/bin]'
+        '--help[Show help]'
+        '--version[Show version]'
+    )
+
+    _arguments -C \
+        '1:command:->command' \
+        '*::arg:->args'
+
+    case "$state" in
+        command)
+            _describe -t commands 'jarvis commands' commands
+            _describe -t options 'jarvis options' options
+            ;;
+        args)
+            case "${words[1]}" in
+                resume)
+                    if [[ -d ".jarvis-checkpoints" ]]; then
+                        local checkpoints=(${(f)"$(ls .jarvis-checkpoints/*.json 2>/dev/null | xargs -I{} basename {})"})
+                        _describe -t checkpoints 'checkpoints' checkpoints
+                    fi
+                    ;;
+                completions)
+                    _describe -t shells 'shells' '(bash zsh fish)'
+                    ;;
+            esac
+            ;;
+    esac
+}
+
+compdef _jarvis jarvis
+EOF
+            ;;
+        fish)
+            cat << 'EOF'
+# Jarvis fish completion
+# Save to ~/.config/fish/completions/jarvis.fish
+
+# Commands
+complete -c jarvis -n "__fish_use_subcommand" -a "status" -d "Show current task status"
+complete -c jarvis -n "__fish_use_subcommand" -a "resume" -d "Resume from checkpoint"
+complete -c jarvis -n "__fish_use_subcommand" -a "history" -d "Show execution history"
+complete -c jarvis -n "__fish_use_subcommand" -a "completions" -d "Generate shell completions"
+
+# Options
+complete -c jarvis -l max-iterations -s i -d "Maximum iterations" -x -a "5 10 15 20 30"
+complete -c jarvis -l promise -s p -d "Completion promise string" -x
+complete -c jarvis -l dir -s d -d "Working directory" -x -a "(__fish_complete_directories)"
+complete -c jarvis -l model -s m -d "Claude model" -x -a "claude-opus-4-5-20251101 claude-sonnet-4-20250514"
+complete -c jarvis -l verbose -s v -d "Enable verbose output"
+complete -c jarvis -l quiet -s q -d "Suppress non-essential output"
+complete -c jarvis -l dry-run -d "Analyze without executing"
+complete -c jarvis -l output-format -s o -d "Output format" -x -a "text json markdown"
+complete -c jarvis -l checkpoint -s c -d "Checkpoint file" -r
+complete -c jarvis -l no-color -d "Disable colored output"
+complete -c jarvis -l install -d "Install to /usr/local/bin"
+complete -c jarvis -l help -d "Show help"
+complete -c jarvis -l version -d "Show version"
+
+# Resume subcommand completions
+complete -c jarvis -n "__fish_seen_subcommand_from resume" -a "latest" -d "Latest checkpoint"
+complete -c jarvis -n "__fish_seen_subcommand_from resume" -a "(ls .jarvis-checkpoints/*.json 2>/dev/null | xargs -I{} basename {})"
+
+# Completions subcommand
+complete -c jarvis -n "__fish_seen_subcommand_from completions" -a "bash zsh fish"
+EOF
+            ;;
+        *)
+            print_error "Unknown shell: $shell"
+            echo "Supported shells: bash, zsh, fish"
+            return 1
+            ;;
+    esac
+}
+
+# ============================================================================
+# Install Command
+# ============================================================================
+
+cmd_install() {
+    local install_dir="${1:-/usr/local/bin}"
+    local target="$install_dir/jarvis"
+
+    echo ""
+    echo -e "${CYAN}═══════════════════════════════════════════════════════════════${NC}"
+    echo -e "${CYAN}  Install Jarvis${NC}"
+    echo -e "${CYAN}═══════════════════════════════════════════════════════════════${NC}"
+    echo ""
+
+    # Check if we need sudo
+    local use_sudo=""
+    if [[ ! -w "$install_dir" ]]; then
+        if command -v sudo &> /dev/null; then
+            use_sudo="sudo"
+            print_info "Requires sudo to install to $install_dir"
+        else
+            print_error "Cannot write to $install_dir and sudo is not available"
+            return 1
+        fi
+    fi
+
+    # Build the release binary first
+    if [[ ! -x "$BINARY" ]]; then
+        print_info "Building jarvis-rs..."
+        cd "$PROJECT_ROOT"
+        if ! cargo build --release; then
+            print_error "Build failed"
+            return 1
+        fi
+        print_success "Build complete"
+    fi
+
+    # Create symlink to this script
+    local script_path="$SCRIPT_DIR/jarvis"
+
+    if [[ -L "$target" ]]; then
+        print_info "Removing existing symlink..."
+        $use_sudo rm "$target"
+    elif [[ -f "$target" ]]; then
+        print_warning "File exists at $target (not a symlink)"
+        read -p "Overwrite? [y/N] " -n 1 -r
+        echo
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            print_info "Installation cancelled"
+            return 0
+        fi
+        $use_sudo rm "$target"
+    fi
+
+    print_info "Creating symlink: $target -> $script_path"
+    $use_sudo ln -s "$script_path" "$target"
+
+    print_success "Jarvis installed successfully!"
+    echo ""
+    echo "You can now run 'jarvis' from anywhere."
+    echo ""
+
+    # Verify installation
+    if command -v jarvis &> /dev/null; then
+        print_success "Verified: jarvis is in PATH"
+    else
+        print_warning "jarvis may not be in PATH yet"
+        echo "You may need to restart your terminal or run:"
+        echo "  export PATH=\"\$PATH:$install_dir\""
+    fi
+}
+
+# ============================================================================
+# Version Command
+# ============================================================================
+
+cmd_version() {
+    if [[ -x "$BINARY" ]]; then
+        "$BINARY" --version 2>/dev/null || echo "jarvis-rs (version unknown)"
+    else
+        echo "jarvis-rs (not built)"
+        echo ""
+        echo "Run 'jarvis build' or execute any command to trigger build."
+    fi
+}
+
+# ============================================================================
+# Help Command
+# ============================================================================
+
+cmd_help() {
+    cat << 'EOF'
+Jarvis-RS: Autonomous AI Agent with Verified Completion
+
+USAGE:
+    jarvis <TASK>                   Execute a task
+    jarvis status                   Show current task status
+    jarvis resume [CHECKPOINT]      Resume from checkpoint (default: latest)
+    jarvis history [LIMIT]          Show execution history (default: 10)
+    jarvis completions <SHELL>      Generate shell completions (bash/zsh/fish)
+    jarvis --install [DIR]          Install to directory (default: /usr/local/bin)
+    jarvis --help                   Show this help
+    jarvis --version                Show version
+
+OPTIONS:
+    -i, --max-iterations <N>    Maximum iterations before giving up (default: 10)
+    -p, --promise <STRING>      Completion promise to detect success
+    -d, --dir <PATH>            Working directory for task execution
+    -m, --model <MODEL>         Claude model to use
+    -v, --verbose               Enable verbose logging
+    -q, --quiet                 Quiet mode - suppress non-essential output
+    -o, --output-format <FMT>   Output format: text, json, markdown (default: text)
+    -c, --checkpoint <FILE>     Path to checkpoint file for save/resume
+        --dry-run               Analyze task without executing
+        --no-color              Disable colored output
+
+ENVIRONMENT VARIABLES:
+    JARVIS_MODEL      Default model to use
+    JARVIS_MAX_ITER   Default max iterations
+    JARVIS_TIMEOUT    Timeout in seconds for task execution
+    JARVIS_VERBOSE    Enable verbose mode (set to 1)
+    JARVIS_QUIET      Enable quiet mode (set to 1)
+    JARVIS_OUTPUT_FMT Output format (text, json, markdown)
+    JARVIS_NO_COLOR   Disable colored output (set to 1)
+    JARVIS_HOME       Data directory (default: ~/.jarvis)
+
+EXAMPLES:
+    jarvis "Fix the typo in README.md"
+    jarvis "Build a REST API with authentication" --max-iterations 20
+    jarvis "Refactor the database layer" --promise "REFACTORING_COMPLETE"
+    jarvis "Run tests" --output-format json --quiet
+    jarvis "Long task" --checkpoint ./task_state.json
+    jarvis status
+    jarvis resume
+    jarvis history 20
+
+SIGNAL FILES:
+    Jarvis uses signal files to communicate task status:
+    - .jarvis-satisfied   Created when task is complete
+    - .jarvis-continue    Created when more work is needed
+    - .jarvis-blocked     Created when task cannot proceed
+
+For more information, visit: https://github.com/your-repo/jarvis-rs
+EOF
+}
+
+# ============================================================================
+# Main Entry Point
+# ============================================================================
+
+main() {
+    # Handle special commands first (these don't need validation)
+    case "${1:-}" in
+        status)
+            shift
+            cmd_status "$@"
+            exit 0
+            ;;
+        resume)
+            shift
+            cmd_resume "$@"
+            exit $?
+            ;;
+        history)
+            shift
+            cmd_history "$@"
+            exit 0
+            ;;
+        completions)
+            shift
+            cmd_completions "$@"
+            exit $?
+            ;;
+        --install)
+            shift
+            cmd_install "$@"
+            exit $?
+            ;;
+        --version|-V)
+            cmd_version
+            exit 0
+            ;;
+        --help|-h)
+            cmd_help
+            exit 0
+            ;;
+    esac
+
+    # If no argument provided, show help
+    if [[ -z "${1:-}" ]]; then
+        cmd_help
+        exit 0
+    fi
+
+    # Validate environment variables before proceeding
+    if ! validate_environment_variables; then
+        print_error "Invalid environment variable configuration"
+        echo ""
+        echo "Run 'jarvis --help' to see valid environment variables." >&2
+        exit 1
+    fi
+
+    # Check for required dependencies
+    if ! check_dependencies; then
+        exit 1
+    fi
+
+    # Check for first run
+    check_first_run
+
+    # Check if binary exists, build if not
+    if [[ ! -x "$BINARY" ]]; then
+        echo "🔨 Building jarvis-rs..."
+
+        # Check for cargo
+        if ! command -v cargo &> /dev/null; then
+            print_error "cargo not found. Please install Rust."
+            echo ""
+            echo "Install Rust from: https://rustup.rs/" >&2
+            exit 1
+        fi
+
+        # Build release binary
+        cd "$PROJECT_ROOT"
+        if ! cargo build --release 2>&1; then
+            print_error "Build failed"
+            echo ""
+            echo "Try running 'cargo build --release' manually to see detailed errors." >&2
+            exit 1
+        fi
+
+        print_success "Build complete"
+        echo ""
+    fi
+
+    # Build arguments array
+    ARGS=()
+
+    # Add default max iterations from env (already validated)
+    if [[ -n "${JARVIS_MAX_ITER:-}" ]]; then
+        ARGS+=("--max-iterations" "$JARVIS_MAX_ITER")
+    fi
+
+    # Add model from env (already validated)
+    if [[ -n "${JARVIS_MODEL:-}" ]]; then
+        ARGS+=("--model" "$JARVIS_MODEL")
+    fi
+
+    # Add verbose flag from env
+    if [[ "${JARVIS_VERBOSE:-0}" != "0" ]]; then
+        ARGS+=("--verbose")
+    fi
+
+    # Add quiet flag from env
+    if [[ "${JARVIS_QUIET:-0}" != "0" ]]; then
+        ARGS+=("--quiet")
+    fi
+
+    # Add output format from env (already validated)
+    if [[ -n "${JARVIS_OUTPUT_FMT:-}" ]]; then
+        ARGS+=("--output-format" "$JARVIS_OUTPUT_FMT")
+    fi
+
+    # Add no-color flag from env
+    if [[ "${JARVIS_NO_COLOR:-0}" != "0" ]]; then
+        ARGS+=("--no-color")
+    fi
+
+    # Add working directory (current dir)
+    local working_dir="$(pwd)"
+    ARGS+=("--dir" "$working_dir")
+
+    # Validate the task argument
+    local task="$1"
+    if [[ -z "$task" ]]; then
+        print_error "Task description is required"
+        echo ""
+        echo "Usage: jarvis \"your task description\"" >&2
+        echo "Run 'jarvis --help' for more information." >&2
+        exit 1
+    fi
+
+    # Check task is not just whitespace
+    if [[ "$task" =~ ^[[:space:]]*$ ]]; then
+        print_error "Task description cannot be empty or whitespace"
+        exit 1
+    fi
+
+    # Check working directory is writable (for signal files)
+    if [[ ! -w "$working_dir" ]]; then
+        print_warning "Working directory is not writable: $working_dir"
+        print_warning "Signal files (.jarvis-*) cannot be created"
+    fi
+
+    # Create working file to indicate task is running
+    if [[ -w "$working_dir" ]]; then
+        echo "$task" > "$working_dir/.jarvis-working" 2>/dev/null || true
+    fi
+
+    # Cleanup function
+    cleanup() {
+        rm -f "$working_dir/.jarvis-working" 2>/dev/null || true
+    }
+    trap cleanup EXIT
+
+    # Execute the binary and capture result
+    local exit_code=0
+    local timeout_cmd=""
+
+    # Apply timeout if JARVIS_TIMEOUT is set
+    if [[ -n "${JARVIS_TIMEOUT:-}" ]]; then
+        if command -v timeout &> /dev/null; then
+            timeout_cmd="timeout ${JARVIS_TIMEOUT}s"
+        elif command -v gtimeout &> /dev/null; then
+            # macOS with coreutils
+            timeout_cmd="gtimeout ${JARVIS_TIMEOUT}s"
+        else
+            print_warning "JARVIS_TIMEOUT set but 'timeout' command not available"
+        fi
+    fi
+
+    if [[ -n "$timeout_cmd" ]]; then
+        $timeout_cmd "$BINARY" "${ARGS[@]}" "$@" || exit_code=$?
+        if [[ $exit_code -eq 124 ]]; then
+            print_error "Task timed out after ${JARVIS_TIMEOUT} seconds"
+        fi
+    else
+        "$BINARY" "${ARGS[@]}" "$@" || exit_code=$?
+    fi
+
+    # Record to history (with error handling)
+    if command -v jq &> /dev/null; then
+        if [[ $exit_code -eq 0 ]]; then
+            record_history "$task" true 1 2>/dev/null || true
+        else
+            record_history "$task" false 1 2>/dev/null || true
+        fi
+    fi
+
+    exit $exit_code
+}
+
+# Run main with all arguments
+main "$@"
