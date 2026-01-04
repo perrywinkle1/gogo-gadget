@@ -18,7 +18,7 @@ cargo build --release
 # Self-extending mode (default on, shown explicitly here)
 ./target/release/gogo-gadget --self-extend "Fetch GitHub repo stats and summarize"
 
-# Swarm mode with 5 agents
+# Worker mode with 5 agents (CLI: --swarm)
 ./target/release/gogo-gadget --swarm 5 "Implement a CRUD API"
 
 # Dry-run to see the plan without executing
@@ -28,7 +28,7 @@ cargo build --release
 ## Core workflows
 
 - **Single-agent loop**: Iterative execution + verification until completion.
-- **Swarm loop**: Task decomposition + parallel agents + aggregation + verification.
+- **Worker loop**: Task decomposition + parallel agents + aggregation + verification.
 - **Self-extend**: Detect capability gaps and synthesize tools on the fly.
 - **RLM**: Recursive Language Model mode for large codebases and cross-file analysis.
 
@@ -39,7 +39,7 @@ These are the core system-level decisions reflected in the code. Each item lists
 - **Ralph-style iteration loop**: run until verified completion (not arbitrary iteration limits) to reduce partial or shallow work (`src/task_loop.rs`).
 - **Signal files for completion**: simple, tool-agnostic completion signaling and external orchestration (`src/task_loop.rs`, `src/swarm/coordinator.rs`).
 - **LLM-driven task analysis**: nuanced complexity/difficulty detection vs regex heuristics (`src/brain/mod.rs`).
-- **Swarm mode for parallel-safe work**: speedups when subtasks can be isolated (`src/swarm/*`).
+- **Worker mode for parallel-safe work**: speedups when subtasks can be isolated (`src/swarm/*`).
 - **Goal-anchor drift checks**: prevent agents from wandering off-task during long runs (`src/swarm/coordinator.rs`).
 - **Creative Overseer**: proactive capability brainstorming so tools appear before they are blocking (`src/extend/overseer.rs`).
 - **Gap detection via output + failure history**: catches missing capabilities from explicit and implicit signals (`src/extend/gap.rs`).
@@ -55,7 +55,7 @@ These are the core system-level decisions reflected in the code. Each item lists
 
 ## Architecture diagrams
 
-### System overview (single vs swarm)
+### System overview (single vs workers)
 
 ```mermaid
 flowchart TB
@@ -71,32 +71,32 @@ flowchart TB
         Signals[.gogo-gadget-* signals]
     end
 
-    subgraph Swarm[Swarm Loop]
-        Coord[SwarmCoordinator]
+    subgraph Workers[Worker Loop]
+        Coord[Coordinator]
         Decompose[TaskDecomposer]
-        Execute[SwarmExecutor]
+        Execute[WorkerExecutor]
         Aggregate[Result aggregator]
-        VerifySwarm[Verifier]
+        VerifyWorkers[Verifier]
     end
 
     Args --> Analyze --> Mode
     Mode -->|Single| TL
-    Mode -->|Swarm| Coord
+    Mode -->|Workers| Coord
 
     TL --> Verify --> Signals
 
-    Coord --> Decompose --> Execute --> Aggregate --> VerifySwarm
-    VerifySwarm --> Signals
+    Coord --> Decompose --> Execute --> Aggregate --> VerifyWorkers
+    VerifyWorkers --> Signals
 ```
 
-### Swarm main loop + Creative Overseer
+### Worker main loop + Creative Overseer
 
 ```mermaid
 flowchart TB
-    subgraph Loop[Swarm Main Loop]
-        Brain[SwarmCoordinator]
+    subgraph Loop[Worker Main Loop]
+        Brain[Coordinator]
         Decompose[TaskDecomposer]
-        Execute[SwarmExecutor]
+        Execute[WorkerExecutor]
         Aggregate[Aggregate results]
         Verify[Verifier]
     end
@@ -144,7 +144,7 @@ flowchart LR
 - Self-extend spec: `docs/specs/self-extend.md`
 - RLM deep-dive: `docs/agents/rlm-architecture.md`
 - RLM tuning: `docs/agents/rlm-tuning.md`
-- Known issue report: `docs/bugs/swarm-verification.md`
+- Known issue report: `docs/bugs/workers-verification.md`
 
 ## Repository layout
 

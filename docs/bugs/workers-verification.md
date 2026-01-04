@@ -1,7 +1,7 @@
-# Bug Report: Swarm Verification Does Not Catch Build Errors
+# Bug Report: Worker Verification Does Not Catch Build Errors
 
 ## Summary
-Swarm mode completed "successfully" (5/5 agents, 0 conflicts) but left the application in a broken state with TypeScript compilation errors and corrupted webpack cache.
+Worker mode completed "successfully" (5/5 agents, 0 conflicts) but left the application in a broken state with TypeScript compilation errors and corrupted webpack cache.
 
 ## Severity
 **High** - Users see a broken application despite gogo-gadget reporting success.
@@ -15,7 +15,7 @@ Swarm mode completed "successfully" (5/5 agents, 0 conflicts) but left the appli
 The orchestrator should verify that the application actually builds and runs correctly after agents complete their work.
 
 ## Actual Behavior
-1. Swarm reported success: "5/5 agents succeeded", "0 conflicts", "verified after 1 iteration"
+1. Worker mode reported success: "5/5 agents succeeded", "0 conflicts", "verified after 1 iteration"
 2. Application showed Next.js error indicator (purple logo) instead of content
 3. Multiple TypeScript compilation errors existed:
    - 15+ unused import declarations
@@ -59,7 +59,7 @@ The `.next` directory can become corrupted during concurrent agent file modifica
 
 ### Fix 1: Add Build Verification to Orchestrator
 ```rust
-// In swarm verification phase:
+// In worker verification phase:
 async fn verify_build(&self) -> Result<bool> {
     // Clear build cache
     let _ = tokio::fs::remove_dir_all(".next").await;
@@ -129,14 +129,14 @@ if !compile_check.success {
 
 ## Impact
 - User sees broken purple logo instead of cypherpunk-themed site
-- All gogo-gadget swarm success metrics are misleading
+- All gogo-gadget worker success metrics are misleading
 - Manual intervention required to fix agent mistakes
 - Trust in autonomous operation compromised
 
 ## Priority
-This should be fixed before promoting swarm mode as production-ready.
+This should be fixed before promoting worker mode as production-ready.
 
 ## Related Files
-- `apps/gogo-gadget/src/swarm/orchestrator.rs` - needs verification logic
+- `apps/gogo-gadget/src/swarm/orchestrator.rs` - needs verification logic (worker mode implementation)
 - `apps/gogo-gadget/src/swarm/executor.rs` - agent completion validation
-- `apps/gogo-gadget/src/swarm/coordinator.rs` - swarm-level verification
+- `apps/gogo-gadget/src/swarm/coordinator.rs` - worker-level verification
