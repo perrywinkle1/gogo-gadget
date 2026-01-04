@@ -1,300 +1,120 @@
-# GoGoGadget System Architecture
+# GoGoGadget Architecture Flowcharts
 
-## High-Level Overview
+These flowcharts are derived from the current code paths in `src/` and are meant to be read top-down.
+Each chart includes a short explanation so the intent is clear without cross-referencing code.
+
+## 1) System Overview (Single vs Swarm)
+
+Explains how the CLI selects an execution mode, runs the loop, and verifies completion.
 
 ```mermaid
 flowchart TB
-    subgraph User["👤 User"]
-        Task[/"Task: Add JWT auth and PostgreSQL"/]
+    subgraph CLI[CLI Entry]
+        Args[Parse args]
+        Analyze[TaskAnalyzer]
+        Mode{Execution mode?}
     end
 
-    subgraph GoGoGadget["🤖 GoGoGadget"]
-        subgraph Analysis["Task Analysis"]
-            TA[Task Analyzer]
-            TA --> |Complexity Score| Decision{Mode?}
-        end
-
-        Decision --> |Simple| Single[Single Agent]
-        Decision --> |Complex| Swarm[Swarm Mode]
-
-        subgraph SwarmSystem["🐝 Swarm System"]
-            subgraph Brain["Brain (SwarmCoordinator)"]
-                Decompose[Task Decomposer]
-                Execute[Swarm Executor]
-                Verify[Verifier]
-                Aggregate[Result Aggregator]
-            end
-
-            subgraph Overseer["🎨 Creative Overseer"]
-                Observe[Observe Context]
-                Brainstorm[Brainstorm Ideas]
-                Synthesize[Synthesize Capabilities]
-            end
-
-            subgraph SharedState["📋 SharedContext"]
-                TaskInfo[Task + Domains + Tech]
-                Phase[Current Phase]
-                Subtasks[Subtasks]
-                Suggestions[Capability Suggestions]
-            end
-
-            subgraph Agents["🤖 Parallel Agents"]
-                A1[Agent 1: Implementation]
-                A2[Agent 2: Review]
-                A3[Agent N: ...]
-            end
-        end
-
-        subgraph Capabilities["🧰 Capability System"]
-            Registry[(Capability Registry)]
-            Skills[Skills/*.md]
-            MCPs[MCP Servers]
-            AgentDefs[Agents/*.md]
-            HotLoad[Hot Loader]
-        end
+    subgraph Single[Single-Agent Loop]
+        TL[TaskLoop]
+        Verify[Verifier]
+        Signals[.gogo-gadget-* signals]
     end
 
-    Task --> TA
-    Swarm --> Decompose
-    Decompose --> |Updates| SharedState
-    SharedState --> |Observes| Observe
-    Decompose --> Execute
-    Execute --> Agents
-    Agents --> |Results| Aggregate
-    Aggregate --> Verify
-    Verify --> |Next Iteration| Decompose
-
-    Observe --> Brainstorm
-    Brainstorm --> |High Confidence| Synthesize
-    Synthesize --> Skills
-    Synthesize --> MCPs
-    Synthesize --> AgentDefs
-    Skills --> HotLoad
-    MCPs --> HotLoad
-    AgentDefs --> HotLoad
-    HotLoad --> Registry
-    Registry --> |Available to| Agents
-
-    Suggestions --> |"Suggests to Brain"| Brain
-
-    style Overseer fill:#e1f5fe
-    style Brain fill:#fff3e0
-    style SharedState fill:#f3e5f5
-    style Capabilities fill:#e8f5e9
-```
-
-## Detailed Execution Flow
-
-```mermaid
-sequenceDiagram
-    autonumber
-    participant U as 👤 User
-    participant J as 🤖 GoGoGadget CLI
-    participant B as 🧠 Brain (Coordinator)
-    participant C as 📋 SharedContext
-    participant O as 🎨 Creative Overseer
-    participant E as ⚡ Executor
-    participant A as 🤖 Agents
-    participant S as 🔧 Synthesis Engine
-    participant R as 📦 Registry
-
-    U->>J: gogo-gadget --swarm 2 "Add JWT auth..."
-    J->>B: execute_with_overseer(task)
-
-    Note over B,C: Phase: Analyzing
-    B->>C: start_task(task)
-    C->>C: Extract domains, technologies
-
-    par Brain executes task
-        Note over B,E: Phase: Decomposing
-        B->>C: set_phase(Decomposing)
-        B->>E: decompose(task)
-        E-->>B: subtasks[]
-        B->>C: set_subtasks(subtasks)
-
-        Note over B,A: Phase: Executing
-        B->>C: set_phase(Executing)
-        B->>E: execute(subtasks)
-        E->>A: spawn parallel agents
-        A->>A: Work on subtasks
-        A-->>E: agent_results[]
-
-        Note over B: Phase: Aggregating
-        B->>C: set_phase(Aggregating)
-        E-->>B: SwarmResult
-
-        Note over B: Phase: Verifying
-        B->>C: set_phase(Verifying)
-        B->>B: verify_result()
-
-    and Overseer observes & creates
-        loop Every 10 seconds
-            O->>C: snapshot()
-            C-->>O: TaskSnapshot
-            O->>O: Analyze domains/tech
-            O->>S: synthesize(ideas)
-            S-->>O: capabilities
-            O->>R: register(capability)
-            O->>C: suggest_capability(name)
-        end
+    subgraph Swarm[Swarm Loop]
+        Coord[SwarmCoordinator]
+        Decompose[TaskDecomposer]
+        Execute[SwarmExecutor]
+        Aggregate[Result aggregator]
+        VerifySwarm[Verifier]
     end
 
-    B-->>J: SwarmResult
-    J-->>U: Task Complete
+    Args --> Analyze --> Mode
+    Mode -->|Single| TL
+    Mode -->|Swarm| Coord
+
+    TL --> Verify --> Signals
+
+    Coord --> Decompose --> Execute --> Aggregate --> VerifySwarm
+    VerifySwarm --> Signals
 ```
 
-## SharedContext State Machine
+## 2) Iterative Task Loop (Verification First)
 
-```mermaid
-stateDiagram-v2
-    [*] --> Analyzing: start_task()
-
-    Analyzing --> Decomposing: Task analyzed
-    Decomposing --> Executing: Subtasks created
-    Executing --> Aggregating: Agents complete
-    Aggregating --> Verifying: Results merged
-
-    Verifying --> Complete: Verification passed
-    Verifying --> Decomposing: Next iteration
-    Verifying --> Failed: Blocked
-
-    Complete --> [*]
-    Failed --> [*]
-
-    note right of Analyzing
-        Overseer starts observing
-        Domains/tech detected
-    end note
-
-    note right of Executing
-        Overseer creates capabilities
-        proactively based on context
-    end note
-```
-
-## Capability Synthesis Pipeline
+Shows the Ralph-style loop that runs until evidence-backed completion is reached.
+Anti-laziness checks are integrated into the verification step.
 
 ```mermaid
 flowchart LR
-    subgraph Detection["🔍 Detection"]
-        Context[Task Context]
-        Domains[Detected Domains]
-        Tech[Technologies]
-    end
-
-    subgraph Ideation["💡 Ideation"]
-        Prompt[Build Observation Prompt]
-        Claude[Claude API]
-        Ideas[Capability Ideas]
-    end
-
-    subgraph Synthesis["🔨 Synthesis"]
-        Template[Load Template]
-        Generate[Generate Content]
-        Verify[Verify Capability]
-    end
-
-    subgraph Registration["📦 Registration"]
-        Save[Save to Disk]
-        HotLoad[Hot Load to Claude]
-        Register[Add to Registry]
-    end
-
-    Context --> Prompt
-    Domains --> Prompt
-    Tech --> Prompt
-    Prompt --> Claude
-    Claude --> Ideas
-    Ideas --> |confidence >= 0.7| Template
-    Template --> Generate
-    Generate --> Verify
-    Verify --> |Success| Save
-    Save --> HotLoad
-    HotLoad --> Register
-    Register --> |Suggest| Brain
-
-    style Detection fill:#e3f2fd
-    style Ideation fill:#fff8e1
-    style Synthesis fill:#f3e5f5
-    style Registration fill:#e8f5e9
+    Start[Start task] --> Iteration[Run iteration]
+    Iteration --> Output[Collect model output + artifacts]
+    Output --> Verify[Build/test + LLM completion check]
+    Verify --> Evidence{Evidence sufficient?}
+    Evidence -->|No| Feedback[Generate feedback + retry]
+    Evidence -->|Yes| Signals[Write .gogo-gadget-satisfied]
+    Feedback --> Iteration
 ```
 
-## Component Responsibilities
+## 3) Swarm Mode + Creative Overseer
+
+Swarm mode decomposes work into parallel agents. In parallel, the overseer proposes
+capabilities that could help the task before gaps become blocking.
 
 ```mermaid
-mindmap
-    root((GoGoGadget))
-        Brain
-            Task Decomposition
-            Agent Orchestration
-            Conflict Resolution
-            Verification Loop
-            Context Updates
-        Creative Overseer
-            Context Observation
-            Domain Detection
-            Capability Brainstorming
-            Proactive Synthesis
-            Suggestion to Brain
-        SharedContext
-            Task State
-            Phase Tracking
-            Domain/Tech Detection
-            Capability Suggestions
-            Thread-Safe Access
-        Capability System
-            Synthesis Engine
-            Template Registry
-            Hot Loader
-            Capability Registry
-            Verification
-        Swarm Executor
-            Parallel Agent Spawn
-            Result Collection
-            Conflict Detection
-            Progress Tracking
+flowchart TB
+    subgraph Brain[SwarmCoordinator]
+        Decompose[TaskDecomposer]
+        Execute[SwarmExecutor]
+        Aggregate[Aggregate results]
+        Verify[Verifier]
+    end
+
+    subgraph Agents[Parallel Agents]
+        A1[Agent 1]
+        A2[Agent 2]
+        A3[Agent N]
+    end
+
+    subgraph Overseer[Creative Overseer]
+        Observe[Read task + assignments]
+        Brainstorm[Generate capability ideas]
+        Synthesize[Create skills/MCPs/agents]
+        Register[CapabilityRegistry]
+    end
+
+    Decompose --> Execute --> Agents --> Aggregate --> Verify
+    Observe --> Brainstorm --> Synthesize --> Register
+    Register --> Execute
 ```
 
-## File Structure
+## 4) Self-Extend Pipeline (Reactive)
 
-```
-src/
-├── main.rs                 # CLI entry point
-├── swarm/
-│   ├── mod.rs              # Swarm types
-│   ├── coordinator.rs      # Brain (orchestration)
-│   ├── executor.rs         # Parallel agent execution
-│   └── decomposer.rs       # Task decomposition
-└── extend/
-    ├── mod.rs              # Capability types
-    ├── context.rs          # SharedContext
-    ├── overseer.rs         # Creative Overseer
-    ├── synthesis.rs        # Capability synthesis
-    ├── loader.rs           # Hot loading
-    ├── registry.rs         # Capability registry
-    └── verify.rs           # Capability verification
+Gap detection monitors output and failure history to create new tools when missing
+capabilities block progress.
+
+```mermaid
+flowchart LR
+    Output[Model output + errors] --> GapDetect[GapDetector]
+    GapDetect --> Gap{Gap found?}
+    Gap -->|No| Continue[Continue task]
+    Gap -->|Yes| Synthesize[SynthesisEngine]
+    Synthesize --> Verify[Capability verification]
+    Verify --> Registry[CapabilityRegistry]
+    Registry --> HotLoad[HotLoader]
+    HotLoad --> Continue
 ```
 
-## Key Data Flows
+## 5) RLM (Recursive Language Model) Pipeline
 
-| Flow | From | To | Data |
-|------|------|-----|------|
-| Task Start | Brain | SharedContext | task, domains, technologies |
-| Phase Update | Brain | SharedContext | TaskPhase enum |
-| Observation | SharedContext | Overseer | TaskSnapshot |
-| Synthesis | Overseer | Registry | SynthesizedCapability |
-| Suggestion | Overseer | SharedContext | capability name |
-| Discovery | Brain | SharedContext | suggested capabilities |
+RLM treats large contexts as explorable terrain by chunking, selecting, and
+recursively drilling down before synthesizing a final answer.
 
-## Usage
-
-```bash
-# Run with Creative Overseer (default)
-gogo-gadget --swarm 3 "Add authentication to the API"
-
-# Disable overseer for faster execution
-gogo-gadget --swarm 3 --no-overseer "Quick fix"
-
-# Standalone capability synthesis
-gogo-gadget --overseer-only "Build a user management system"
+```mermaid
+flowchart TB
+    Start[Input query + context path]
+    Start --> Chunk[Chunker]
+    Chunk --> Navigate[Navigator selects chunks]
+    Navigate --> Explore[Explorer reads selected chunks]
+    Explore --> Aggregate[Aggregator synthesizes]
+    Aggregate --> Answer[Answer + evidence]
 ```
