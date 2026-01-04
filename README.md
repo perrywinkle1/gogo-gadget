@@ -12,6 +12,7 @@ Jarvis-V2 is an evolution of jarvis-rs that adds the ability to recognize capabi
 - **Verification Loop**: Built-in verification ensures tasks are actually complete
 - **Anti-Laziness Enforcement**: Detects mock data patterns and requires real evidence
 - **Shortcut Detection**: Catches 18 types of incomplete work (mock data, TODOs, placeholders, etc.)
+- **RLM Mode**: Recursive Language Model for processing codebases exceeding context limits
 
 ## Installation
 
@@ -145,6 +146,171 @@ OPTIONS:
 └─────────────────────────────────────────────────────────────────┘
 ```
 
+---
+
+## RLM Mode (Recursive Language Model)
+
+RLM enables processing of codebases exceeding LLM context windows through intelligent recursive decomposition. Instead of truncating or summarizing, RLM treats large codebases as explorable environments.
+
+### RLM Data Flow
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                          RLM Pipeline                                    │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                          │
+│  INPUT: Query + Context Path                                             │
+│     │                                                                    │
+│     ▼                                                                    │
+│  ┌─────────────────────────────────────────────────────────────────┐    │
+│  │                        CHUNKING PHASE                            │    │
+│  │  ┌─────────┐    ┌───────────┐    ┌───────────┐                  │    │
+│  │  │ Chunker │───▶│  Context  │───▶│ Pre-score │                  │    │
+│  │  │(split)  │    │ (HashMap) │    │(relevance)│                  │    │
+│  │  └─────────┘    └───────────┘    └───────────┘                  │    │
+│  │                                                                  │    │
+│  │  Strategies: Structural | Semantic | FixedSize | ByFile         │    │
+│  └─────────────────────────────────────────────────────────────────┘    │
+│                                        │                                 │
+│                                        ▼                                 │
+│  ┌─────────────────────────────────────────────────────────────────┐    │
+│  │                       NAVIGATION PHASE                           │    │
+│  │                                                                  │    │
+│  │      Query: "How does authentication work?"                      │    │
+│  │                         │                                        │    │
+│  │                         ▼                                        │    │
+│  │               ┌─────────────────┐                                │    │
+│  │               │    Navigator    │ ◄── Haiku 4.5 (fast)           │    │
+│  │               │  "Select most   │                                │    │
+│  │               │   relevant      │                                │    │
+│  │               │   chunks"       │                                │    │
+│  │               └────────┬────────┘                                │    │
+│  │                        │                                         │    │
+│  │         ┌──────────────┼──────────────┐                          │    │
+│  │         ▼              ▼              ▼                          │    │
+│  │    [auth.rs]     [login.rs]    [session.rs]                      │    │
+│  │    score: 0.92   score: 0.87   score: 0.81                       │    │
+│  │                                                                  │    │
+│  └─────────────────────────────────────────────────────────────────┘    │
+│                                        │                                 │
+│                                        ▼                                 │
+│  ┌─────────────────────────────────────────────────────────────────┐    │
+│  │                      EXPLORATION PHASE                           │    │
+│  │                                                                  │    │
+│  │   ┌─────────┐    ┌─────────┐    ┌─────────┐                     │    │
+│  │   │ auth.rs │    │login.rs │    │session.rs│  ◄── Opus 4.5      │    │
+│  │   │(explore)│    │(explore)│    │(explore) │      (deep)        │    │
+│  │   └────┬────┘    └────┬────┘    └────┬─────┘                     │    │
+│  │        │              │              │                           │    │
+│  │        ▼              ▼              ▼                           │    │
+│  │   [Findings]     [Findings]     [Findings]                       │    │
+│  │   - JWT tokens   - Password     - Redis store                    │    │
+│  │   - OAuth flow   - 2FA check    - TTL config                     │    │
+│  │                                                                  │    │
+│  │   If chunk too large → DECOMPOSE & RECURSE (depth+1)             │    │
+│  │                                                                  │    │
+│  └─────────────────────────────────────────────────────────────────┘    │
+│                                        │                                 │
+│                                        ▼                                 │
+│  ┌─────────────────────────────────────────────────────────────────┐    │
+│  │                      AGGREGATION PHASE                           │    │
+│  │                                                                  │    │
+│  │   ┌────────────────────────────────────────────┐                 │    │
+│  │   │              Aggregator (Opus 4.5)          │                 │    │
+│  │   │                                            │                 │    │
+│  │   │  1. Deduplicate (similarity > 0.85)        │                 │    │
+│  │   │  2. Resolve conflicts                      │                 │    │
+│  │   │  3. Synthesize answer                      │                 │    │
+│  │   │  4. Cite evidence (file:line)              │                 │    │
+│  │   │                                            │                 │    │
+│  │   └────────────────────────────────────────────┘                 │    │
+│  │                                                                  │    │
+│  └─────────────────────────────────────────────────────────────────┘    │
+│                                        │                                 │
+│                                        ▼                                 │
+│  OUTPUT: RlmResult                                                       │
+│    ├── answer: "Auth uses JWT with OAuth2 flow..."                       │
+│    ├── key_insights: ["JWT in auth.rs:45", "Redis sessions"]             │
+│    ├── evidence: [{ file: "src/auth.rs", lines: 42-67 }, ...]           │
+│    ├── confidence: 0.94                                                  │
+│    └── chunks_explored: 12                                               │
+│                                                                          │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+### RLM Use Cases
+
+| Use Case | Command |
+|----------|---------|
+| **Codebase Exploration** | `jarvis-v2 --rlm --rlm-context ./src "How does authentication work?"` |
+| **Security Audit** | `jarvis-v2 --rlm --rlm-context ./src "Find SQL injection vulnerabilities"` |
+| **Architecture Understanding** | `jarvis-v2 --rlm --rlm-context . "Map the data flow from API to database"` |
+| **Debugging** | `jarvis-v2 --rlm --rlm-context ./src "Why might the checkout fail silently?"` |
+| **Refactoring Analysis** | `jarvis-v2 --rlm --rlm-context ./src "What would break if I rename UserService?"` |
+| **Documentation Gen** | `jarvis-v2 --rlm --rlm-context ./src "Document all public APIs"` |
+| **Dependency Analysis** | `jarvis-v2 --rlm --rlm-context . "What external services does this app call?"` |
+| **Test Coverage** | `jarvis-v2 --rlm --rlm-context ./tests "What scenarios are not covered?"` |
+
+### RLM CLI Flags
+
+```bash
+# One-shot RLM query
+jarvis-v2 --rlm "Find security issues" --rlm-context ./src
+
+# Continuous mode (keeps context in memory)
+jarvis-v2 --rlm --rlm-mode continuous --rlm-context ./src
+
+# With custom depth (default: 5)
+jarvis-v2 --rlm --rlm-depth 3 "How does auth work?"
+```
+
+| Flag | Description |
+|------|-------------|
+| `--rlm` | Enable RLM mode |
+| `--rlm-context <PATH>` | File or directory to analyze |
+| `--rlm-depth <N>` | Max recursion depth (default: 5) |
+| `--rlm-mode <MODE>` | `oneshot` (default) or `continuous` |
+
+### When to Use RLM
+
+**Use RLM for:**
+- Codebases > 50 files or > 100K tokens
+- Questions requiring cross-file understanding
+- Security audits of existing code
+- Architecture documentation
+
+**Don't use RLM for:**
+- Greenfield projects (nothing to explore)
+- Single-file questions (use regular mode)
+- Simple grep-able queries
+
+### RLM Module Structure
+
+```
+src/rlm/
+├── executor.rs    # Main entry: RlmExecutor.execute()
+├── navigator.rs   # LLM-based chunk selection (Haiku 4.5)
+├── chunker.rs     # Content splitting (structural/semantic/fixed)
+├── context.rs     # RlmContext - explorable environment
+├── aggregator.rs  # Result synthesis + deduplication (Opus 4.5)
+├── daemon.rs      # Continuous mode (.jarvis-rlm-query signal files)
+├── cache.rs       # LRU cache for navigation decisions
+└── types.rs       # RlmConfig, Chunk, RlmResult
+```
+
+### RLM Cost Estimation
+
+| Codebase Size | Typical Query Cost |
+|---------------|-------------------|
+| 10 files | ~$0.10 |
+| 50 files | ~$0.30 |
+| 200 files | ~$0.80 |
+| 1000 files | ~$2.00 |
+
+*Costs based on Opus 4.5 exploration + Haiku 4.5 navigation*
+
+---
+
 ## Module Structure
 
 ```
@@ -170,6 +336,16 @@ src/
 │   ├── mod.rs           # Swarm coordination
 │   ├── coordinator.rs   # Multi-agent orchestration
 │   └── executor.rs      # Parallel execution
+├── rlm/                 # Recursive Language Model
+│   ├── mod.rs           # Module exports
+│   ├── types.rs         # RlmConfig, Chunk, RlmResult
+│   ├── executor.rs      # Main RLM orchestration
+│   ├── navigator.rs     # LLM-based chunk selection
+│   ├── chunker.rs       # Content splitting strategies
+│   ├── context.rs       # RlmContext explorable environment
+│   ├── aggregator.rs    # Result synthesis
+│   ├── daemon.rs        # Continuous mode runner
+│   └── cache.rs         # LRU navigation cache
 └── subagent.rs          # Claude Code integration
 ```
 
