@@ -20,6 +20,7 @@ use std::time::Duration;
 
 pub mod brain;
 pub mod extend;
+pub mod rlm;
 pub mod subagent;
 pub mod swarm;
 pub mod task_loop;
@@ -1048,8 +1049,8 @@ pub use subagent::{
 
 // Re-export extend module types for self-extension capability
 pub use extend::{
-    CapabilityRegistry, CapabilityType, CapabilityVerifier, HotLoader, LoadResult,
-    SynthesizedCapability, SynthesisEngine, VerificationResult as ExtendVerificationResult,
+    CapabilityRegistry, CapabilityType, CapabilityVerifier, CreativeOverseer, HotLoader, LoadResult,
+    OverseerConfig, SynthesizedCapability, SynthesisEngine, VerificationResult as ExtendVerificationResult,
 };
 
 /// Enhanced checkpoint with more metadata

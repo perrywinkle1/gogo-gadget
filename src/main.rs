@@ -99,8 +99,8 @@ until verified complete. Agents run until done - no iteration limits. \
 Uses Claude as the underlying LLM with built-in verification."
 )]
 struct Args {
-    /// The task to execute (required unless resuming from checkpoint or using registration/capability commands)
-    #[arg(required_unless_present_any = ["checkpoint", "register_subagent", "unregister_subagent", "list_capabilities", "prune_capabilities"])]
+    /// The task to execute (required unless resuming from checkpoint or using registration/capability/rlm commands)
+    #[arg(required_unless_present_any = ["checkpoint", "register_subagent", "unregister_subagent", "list_capabilities", "prune_capabilities", "rlm"])]
     task: Option<String>,
 
     /// Working directory for task execution
@@ -193,15 +193,16 @@ struct Args {
     #[arg(long, value_name = "SCOPE", default_value = "project")]
     registration_scope: String,
 
-    /// Enable self-extending capabilities
+    /// Enable self-extending capabilities (DEFAULT: enabled)
     ///
-    /// When enabled, jarvis-v2 will detect capability gaps during execution
-    /// and attempt to synthesize missing capabilities (MCPs, Skills, Agents).
+    /// Jarvis-v2 detects capability gaps during execution and synthesizes
+    /// missing capabilities (MCPs, Skills, Agents). This is enabled by default.
+    /// Use --no-self-extend to disable.
     #[arg(long)]
     self_extend: bool,
 
-    /// Disable self-extending capabilities (overrides default)
-    #[arg(long, conflicts_with = "self_extend")]
+    /// Disable self-extending capabilities
+    #[arg(long)]
     no_self_extend: bool,
 
     /// Show detected capability gaps without synthesizing
@@ -218,6 +219,48 @@ struct Args {
     /// Prune unused synthesized capabilities older than N days
     #[arg(long, value_name = "DAYS")]
     prune_capabilities: Option<u32>,
+
+    /// Disable the Creative Overseer (proactive capability brainstorming)
+    ///
+    /// By default, the Creative Overseer runs in parallel with swarm execution
+    /// to proactively brainstorm and synthesize new capabilities before gaps
+    /// are encountered. Use this flag to disable this behavior.
+    #[arg(long)]
+    no_overseer: bool,
+
+    /// Model to use for Creative Overseer brainstorming
+    ///
+    /// Default is "opus" for high-quality capability ideation. Options: haiku, sonnet, opus
+    #[arg(long, value_name = "MODEL", default_value = "opus")]
+    overseer_model: String,
+
+    /// Enable RLM (Recursive Language Model) mode
+    ///
+    /// RLM enables processing inputs far exceeding context windows through
+    /// recursive decomposition. Treats large contexts as explorable environments.
+    #[arg(long)]
+    rlm: bool,
+
+    /// Context path for RLM (file or directory)
+    ///
+    /// The path to analyze. Can be a single file or directory.
+    /// Defaults to ./src if not specified.
+    #[arg(long, value_name = "PATH")]
+    rlm_context: Option<PathBuf>,
+
+    /// Maximum recursion depth for RLM
+    ///
+    /// Controls how deep the recursive exploration can go.
+    /// Higher values explore more deeply but use more tokens.
+    #[arg(long, default_value = "5")]
+    rlm_depth: u32,
+
+    /// RLM mode: oneshot or continuous
+    ///
+    /// - oneshot: Run a single query against the context
+    /// - continuous: Run as a daemon, watching for query files
+    #[arg(long, default_value = "oneshot")]
+    rlm_mode: String,
 }
 
 fn create_spinner() -> ProgressBar {
@@ -407,6 +450,80 @@ fn load_checkpoint(path: &PathBuf) -> Result<Checkpoint> {
     Ok(checkpoint)
 }
 
+/// Run RLM mode (oneshot or continuous)
+fn run_rlm(
+    args: &Args,
+    working_dir: PathBuf,
+    shutdown_signal: ShutdownSignal,
+) -> Result<()> {
+    use jarvis_v2::rlm::{RlmConfig, RlmContext, RlmDaemon, RlmExecutor};
+    use tracing::info;
+
+    let context_path = args
+        .rlm_context
+        .clone()
+        .unwrap_or_else(|| working_dir.join("src"));
+
+    let config = RlmConfig {
+        max_depth: args.rlm_depth,
+        ..Default::default()
+    };
+
+    match args.rlm_mode.as_str() {
+        "continuous" => {
+            info!("Starting RLM in continuous mode");
+            let mut daemon = RlmDaemon::new(config, working_dir, context_path, shutdown_signal);
+            daemon.run()?;
+        }
+        "oneshot" | _ => {
+            // Get query from remaining args or prompt
+            let query = args.task.clone().unwrap_or_else(|| {
+                eprintln!("Usage: jarvis-v2 --rlm --rlm-context ./src \"your query\"");
+                std::process::exit(1);
+            });
+
+            info!("Running RLM one-shot query: {}", query);
+
+            let context = if context_path.is_dir() {
+                RlmContext::from_directory(&context_path, config.clone())?
+            } else {
+                RlmContext::from_file(&context_path, config.clone())?
+            };
+
+            let mut executor = RlmExecutor::new(config, working_dir);
+            let result = executor.execute_on_context(&query, &context)?;
+
+            // Output result
+            println!("\n=== RLM Result ===");
+            println!("Answer: {}", result.answer);
+            println!("\nKey Insights:");
+            for insight in &result.key_insights {
+                println!("  - {}", insight);
+            }
+            println!("\nEvidence ({} sources):", result.evidence.len());
+            for ev in result.evidence.iter().take(5) {
+                println!("  - {}:{:?}", ev.source_path.display(), ev.line_range);
+            }
+            println!(
+                "\nStats: {} chunks, depth {}, {} tokens, {:.0}% confidence",
+                result.chunks_explored,
+                result.max_depth_reached,
+                result.total_tokens,
+                result.confidence * 100.0
+            );
+
+            if !result.success {
+                if let Some(err) = result.error {
+                    eprintln!("\nError: {}", err);
+                }
+                std::process::exit(1);
+            }
+        }
+    }
+
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
@@ -499,6 +616,11 @@ async fn main() -> Result<()> {
             println!("Registry updated.");
         }
         return Ok(());
+    }
+
+    // Handle RLM mode
+    if args.rlm {
+        return run_rlm(&args, working_dir, shutdown_signal);
     }
 
     // Handle subagent mode
@@ -690,8 +812,8 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
-    // Determine if self-extend is enabled
-    let self_extend_enabled = args.self_extend && !args.no_self_extend;
+    // Self-extend is enabled by default, use --no-self-extend to disable
+    let self_extend_enabled = !args.no_self_extend;
 
     // Execute based on mode
     let result = match execution_mode {
@@ -725,8 +847,20 @@ async fn main() -> Result<()> {
                 }
             }
 
-            let coordinator = SwarmCoordinator::from_config(&config, agent_count)
+            // Configure overseer if not disabled
+            let mut coordinator = SwarmCoordinator::from_config(&config, agent_count)
                 .with_shutdown_signal(shutdown_signal.clone());
+
+            if !args.no_overseer && self_extend_enabled {
+                use jarvis_v2::extend::OverseerConfig;
+                let overseer_config = OverseerConfig {
+                    enabled: true,
+                    brainstorm_model: args.overseer_model.clone(),
+                    working_dir: config.working_dir.clone(),
+                    ..OverseerConfig::default()
+                };
+                coordinator = coordinator.with_overseer_config(overseer_config);
+            }
 
             let swarm_result = coordinator.execute(&task).await?;
 
