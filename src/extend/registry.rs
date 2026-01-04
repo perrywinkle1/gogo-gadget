@@ -1,7 +1,7 @@
 //! Capability Registry Module
 //!
 //! Tracks available and synthesized capabilities.
-//! Storage: ~/.jarvis/capabilities.json
+//! Storage: ~/.gogo-gadget/capabilities.json
 
 use super::{CapabilityGap, CapabilityType, SynthesizedCapability};
 use serde::{Deserialize, Serialize};
@@ -295,7 +295,7 @@ impl CapabilityRegistry {
 
     /// Create a new empty registry with default path
     pub fn new_default() -> Self {
-        let path = Self::default_path().unwrap_or_else(|_| PathBuf::from(".jarvis/capabilities.json"));
+        let path = Self::default_path().unwrap_or_else(|_| PathBuf::from(".gogo-gadget/capabilities.json"));
         Self {
             mcps: Vec::new(),
             skills: Vec::new(),
@@ -306,7 +306,7 @@ impl CapabilityRegistry {
         }
     }
 
-    /// Load registry from default path (~/.jarvis/capabilities.json)
+    /// Load registry from default path (~/.gogo-gadget/capabilities.json)
     pub fn load() -> anyhow::Result<Self> {
         let path = Self::default_path()?;
         Self::load_from(&path)
@@ -347,7 +347,7 @@ impl CapabilityRegistry {
     /// Get default registry path
     pub fn default_path() -> anyhow::Result<PathBuf> {
         let home = dirs_home().ok_or_else(|| anyhow::anyhow!("Cannot find home directory"))?;
-        Ok(home.join(".jarvis").join("capabilities.json"))
+        Ok(home.join(".gogo-gadget").join("capabilities.json"))
     }
 
     /// Migrate registry to current version

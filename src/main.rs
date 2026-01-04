@@ -1,4 +1,4 @@
-//! Jarvis-V2: Ralph-style autonomous AI agent framework
+//! GoGoGadget: Ralph-style autonomous AI agent framework
 //!
 //! An iterative task execution system inspired by the Ralph-Wiggum pattern.
 //! Executes tasks in a loop until verified complete, detecting shortcuts
@@ -7,7 +7,7 @@
 //! Features:
 //! - Iterative execution until verified complete
 //! - Completion promise detection (Ralph-style)
-//! - Signal file-based completion (.jarvis-satisfied, .jarvis-blocked)
+//! - Signal file-based completion (.gogo-gadget-satisfied, .gogo-gadget-blocked)
 //! - Checkpoint save/restore for resumable execution
 //! - Graceful signal handling (Ctrl+C saves checkpoint)
 //! - Progress callbacks with colored output
@@ -16,7 +16,7 @@ use anyhow::Result;
 use clap::{Parser, ValueEnum};
 use colored::Colorize;
 use indicatif::{ProgressBar, ProgressStyle};
-use jarvis_v2::{
+use gogo_gadget::{
     brain::TaskAnalyzer,
     extend::{CapabilityRegistry, GapDetector, HotLoader, SynthesisEngine},
     subagent, swarm::SwarmCoordinator, task_loop::TaskLoop, verify::Verifier,
@@ -73,28 +73,28 @@ struct TaskOutput {
     error: Option<String>,
 }
 
-/// Jarvis-V2: Autonomous AI agent with verified completion
+/// GoGoGadget: Autonomous AI agent with verified completion
 ///
-/// Jarvis-V2 is an LLM-driven autonomous agent framework.
+/// GoGoGadget is an LLM-driven autonomous agent framework.
 /// Agents run until their task is complete - no arbitrary iteration limits.
 ///
 /// # Examples
 ///
 /// Basic usage:
-///   jarvis-v2 "Write a hello world program in Rust"
+///   gogo-gadget "Write a hello world program in Rust"
 ///
 /// With model selection:
-///   jarvis-v2 "Refactor the auth module" -m claude-sonnet-4-20250514
+///   gogo-gadget "Refactor the auth module" -m claude-sonnet-4-20250514
 ///
 /// Swarm mode with parallel agents:
-///   jarvis-v2 "Build a full feature" -s 3
+///   gogo-gadget "Build a full feature" -s 3
 #[derive(Parser, Debug)]
-#[command(name = "jarvis-v2")]
-#[command(author = "Jarvis AI Framework")]
+#[command(name = "gogo-gadget")]
+#[command(author = "GoGoGadget AI Framework")]
 #[command(version = "0.1.0")]
 #[command(about = "LLM-driven autonomous task execution")]
 #[command(
-    long_about = "Jarvis-V2 is an autonomous AI agent framework that executes tasks \
+    long_about = "GoGoGadget is an autonomous AI agent framework that executes tasks \
 until verified complete. Agents run until done - no iteration limits. \
 Uses Claude as the underlying LLM with built-in verification."
 )]
@@ -164,7 +164,7 @@ struct Args {
 
     /// Run as a Claude Code subagent
     ///
-    /// When enabled, jarvis-v2 runs in subagent mode with context compression.
+    /// When enabled, gogo-gadget runs in subagent mode with context compression.
     /// Output is compressed to hide iteration details from the parent agent.
     #[arg(long)]
     subagent_mode: bool,
@@ -173,16 +173,16 @@ struct Args {
     #[arg(long, value_name = "JSON", hide = true)]
     subagent_config: Option<String>,
 
-    /// Register jarvis-v2 as a Claude Code subagent
+    /// Register gogo-gadget as a Claude Code subagent
     ///
-    /// Adds jarvis-v2 to the Claude Code settings file so it can be
+    /// Adds gogo-gadget to the Claude Code settings file so it can be
     /// invoked as a specialized subagent.
     #[arg(long)]
     register_subagent: bool,
 
-    /// Unregister jarvis-v2 from Claude Code
+    /// Unregister gogo-gadget from Claude Code
     ///
-    /// Removes jarvis-v2 from the Claude Code settings file.
+    /// Removes gogo-gadget from the Claude Code settings file.
     #[arg(long)]
     unregister_subagent: bool,
 
@@ -195,7 +195,7 @@ struct Args {
 
     /// Enable self-extending capabilities (DEFAULT: enabled)
     ///
-    /// Jarvis-v2 detects capability gaps during execution and synthesizes
+    /// GoGoGadget detects capability gaps during execution and synthesizes
     /// missing capabilities (MCPs, Skills, Agents). This is enabled by default.
     /// Use --no-self-extend to disable.
     #[arg(long)]
@@ -285,7 +285,7 @@ fn create_spinner() -> ProgressBar {
 
 fn print_header(no_color: bool) {
     let version = env!("CARGO_PKG_VERSION");
-    let header = format!("Jarvis-V2 v{}", version);
+    let header = format!("GoGoGadget v{}", version);
 
     if no_color {
         println!("{}", header);
@@ -297,7 +297,7 @@ fn print_header(no_color: bool) {
 }
 
 fn print_analysis(
-    analysis: &jarvis_v2::brain::TaskAnalysis,
+    analysis: &gogo_gadget::brain::TaskAnalysis,
     format: OutputFormat,
     no_color: bool,
     swarm_override: Option<u32>,
@@ -382,7 +382,7 @@ fn print_analysis(
     Ok(())
 }
 
-fn print_result(result: &jarvis_v2::TaskResult, format: OutputFormat, no_color: bool) {
+fn print_result(result: &gogo_gadget::TaskResult, format: OutputFormat, no_color: bool) {
     let output = TaskOutput {
         success: result.success,
         iterations: result.iterations,
@@ -464,7 +464,7 @@ fn run_rlm(
     working_dir: PathBuf,
     shutdown_signal: ShutdownSignal,
 ) -> Result<()> {
-    use jarvis_v2::rlm::{RlmConfig, RlmContext, RlmDaemon, RlmExecutor};
+    use gogo_gadget::rlm::{RlmConfig, RlmContext, RlmDaemon, RlmExecutor};
     use tracing::info;
 
     let context_path = args
@@ -486,7 +486,7 @@ fn run_rlm(
         "oneshot" | _ => {
             // Get query from remaining args or prompt
             let query = args.task.clone().unwrap_or_else(|| {
-                eprintln!("Usage: jarvis-v2 --rlm --rlm-context ./src \"your query\"");
+                eprintln!("Usage: gogo-gadget --rlm --rlm-context ./src \"your query\"");
                 std::process::exit(1);
             });
 
@@ -568,7 +568,7 @@ async fn main() -> Result<()> {
             _ => subagent::RegistrationScope::Project(working_dir.clone()),
         };
         subagent::register_subagent(scope)?;
-        println!("jarvis-v2 registered as Claude Code subagent");
+        println!("gogo-gadget registered as Claude Code subagent");
         return Ok(());
     }
 
@@ -578,7 +578,7 @@ async fn main() -> Result<()> {
             _ => subagent::RegistrationScope::Project(working_dir.clone()),
         };
         subagent::unregister_subagent(scope)?;
-        println!("jarvis-v2 unregistered from Claude Code");
+        println!("gogo-gadget unregistered from Claude Code");
         return Ok(());
     }
 
@@ -806,17 +806,17 @@ async fn main() -> Result<()> {
             for (i, gap) in gaps.iter().enumerate() {
                 println!("\n{}. {} ({:?})", i + 1, gap.name(), gap.capability_type());
                 match gap {
-                    jarvis_v2::extend::CapabilityGap::Mcp { purpose, api_hint, .. } => {
+                    gogo_gadget::extend::CapabilityGap::Mcp { purpose, api_hint, .. } => {
                         println!("   Purpose: {}", purpose);
                         if let Some(hint) = api_hint {
                             println!("   API Hint: {}", hint);
                         }
                     }
-                    jarvis_v2::extend::CapabilityGap::Skill { trigger, purpose, .. } => {
+                    gogo_gadget::extend::CapabilityGap::Skill { trigger, purpose, .. } => {
                         println!("   Trigger: {}", trigger);
                         println!("   Purpose: {}", purpose);
                     }
-                    jarvis_v2::extend::CapabilityGap::Agent { specialization, .. } => {
+                    gogo_gadget::extend::CapabilityGap::Agent { specialization, .. } => {
                         println!("   Specialization: {}", specialization);
                     }
                 }
@@ -870,10 +870,10 @@ async fn main() -> Result<()> {
                 coordinator.execute(&task).await?
             } else {
                 // Run with Creative Overseer observing and proactively creating capabilities
-                use jarvis_v2::extend::CapabilityRegistry;
+                use gogo_gadget::extend::CapabilityRegistry;
                 use std::sync::{Arc, Mutex};
 
-                let registry_path = working_dir.join(".jarvis").join("capabilities.json");
+                let registry_path = working_dir.join(".gogo-gadget").join("capabilities.json");
                 let registry = Arc::new(Mutex::new(CapabilityRegistry::new(&registry_path)));
 
                 println!(
@@ -886,7 +886,7 @@ async fn main() -> Result<()> {
             };
 
             // Convert SwarmResult to TaskResult
-            jarvis_v2::TaskResult::from(swarm_result)
+            gogo_gadget::TaskResult::from(swarm_result)
         }
     };
 
@@ -923,7 +923,7 @@ async fn run_overseer_only(
     working_dir: PathBuf,
     shutdown_signal: ShutdownSignal,
 ) -> Result<()> {
-    use jarvis_v2::extend::{CapabilityRegistry, CapabilityType, CreativeOverseer, HotLoader, OverseerConfig, SynthesizedCapability};
+    use gogo_gadget::extend::{CapabilityRegistry, CapabilityType, CreativeOverseer, HotLoader, OverseerConfig, SynthesizedCapability};
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
 
@@ -992,7 +992,7 @@ async fn run_overseer_only(
 
                         // If synthesized, install into Claude Code
                         if idea.synthesis_success == Some(true) {
-                            let synth_dir = working_dir.join(".jarvis").join("synthesized");
+                            let synth_dir = working_dir.join(".gogo-gadget").join("synthesized");
                             let cap_path = match idea.capability_type {
                                 CapabilityType::Skill => synth_dir.join("skills").join(format!("{}.SKILL.md", idea.name)),
                                 CapabilityType::Mcp => synth_dir.join("mcps").join(&idea.name),
@@ -1070,7 +1070,7 @@ async fn run_overseer_only(
     println!("   Capabilities synthesized: {}", total_synthesized);
 
     // Show what was created
-    let synth_dir = working_dir.join(".jarvis").join("synthesized");
+    let synth_dir = working_dir.join(".gogo-gadget").join("synthesized");
     if synth_dir.exists() {
         println!("\n   Created files:");
         for entry in walkdir::WalkDir::new(&synth_dir)

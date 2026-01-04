@@ -1,8 +1,8 @@
-# Jarvis bash completion
-# Add to ~/.bashrc: source /path/to/jarvis.bash
-# Or: eval "$(jarvis completions bash)"
+# GoGoGadget bash completion
+# Add to ~/.bashrc: source /path/to/gogo-gadget.bash
+# Or: eval "$(gogo-gadget completions bash)"
 
-_jarvis_completions() {
+_gogo_gadget_completions() {
     local cur="${COMP_WORDS[COMP_CWORD]}"
     local prev="${COMP_WORDS[COMP_CWORD-1]}"
 
@@ -13,13 +13,13 @@ _jarvis_completions() {
     local options="--max-iterations --promise --dir --model --verbose --quiet --dry-run --output-format --checkpoint --no-color"
 
     case "$prev" in
-        jarvis)
+        gogo-gadget)
             COMPREPLY=($(compgen -W "$commands $options" -- "$cur"))
             ;;
         resume)
             # Complete checkpoint files
-            if [[ -d ".jarvis-checkpoints" ]]; then
-                local checkpoints=$(ls .jarvis-checkpoints/*.json 2>/dev/null | xargs -I{} basename {})
+            if [[ -d ".gogo-gadget-checkpoints" ]]; then
+                local checkpoints=$(ls .gogo-gadget-checkpoints/*.json 2>/dev/null | xargs -I{} basename {})
                 COMPREPLY=($(compgen -W "$checkpoints latest" -- "$cur"))
             else
                 COMPREPLY=($(compgen -W "latest" -- "$cur"))
@@ -58,4 +58,4 @@ _jarvis_completions() {
     esac
 }
 
-complete -F _jarvis_completions jarvis
+complete -F _gogo_gadget_completions gogo-gadget

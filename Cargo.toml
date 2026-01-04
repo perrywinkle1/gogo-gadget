@@ -1,5 +1,5 @@
 [package]
-name = "jarvis-v2"
+name = "gogo-gadget"
 version = "0.1.0"
 edition = "2021"
 description = "Autonomous agentic system with verified completion and self-extending capabilities"

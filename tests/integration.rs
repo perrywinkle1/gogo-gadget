@@ -1,9 +1,9 @@
-//! Integration tests for Jarvis-RS
+//! Integration tests for GoGoGadget
 //!
 //! NOTE: Tests that relied on deprecated ShortcutType/ShortcutDetector functionality
 //! have been removed. The verification system now uses LlmCompletionCheck instead.
 
-use jarvis_v2::{
+use gogo_gadget::{
     brain::TaskAnalyzer,
     verify::Verifier,
     AntiLazinessConfig, Config, Difficulty, ExecutionMode,
@@ -229,8 +229,8 @@ mod e2e_tests {
 # Mock Claude - immediate success
 echo "✅ Task completed successfully!"
 echo "Successfully implemented all requested features."
-touch "$PWD/.jarvis-satisfied"
-echo "All tasks complete" > "$PWD/.jarvis-satisfied"
+touch "$PWD/.gogo-gadget-satisfied"
+echo "All tasks complete" > "$PWD/.gogo-gadget-satisfied"
 "#
             .to_string(),
             MockClaudeBehavior::SuccessAfterIterations(n) => {
@@ -248,12 +248,12 @@ echo $COUNT > "$COUNTER_FILE"
 
 if [ $COUNT -ge {} ]; then
     echo "✅ Task completed successfully!"
-    touch "$PWD/.jarvis-satisfied"
-    echo "Completed after $COUNT iterations" > "$PWD/.jarvis-satisfied"
+    touch "$PWD/.gogo-gadget-satisfied"
+    echo "Completed after $COUNT iterations" > "$PWD/.gogo-gadget-satisfied"
 else
     echo "⏳ Still working on iteration $COUNT..."
-    touch "$PWD/.jarvis-continue"
-    echo "Need more work" > "$PWD/.jarvis-continue"
+    touch "$PWD/.gogo-gadget-continue"
+    echo "Need more work" > "$PWD/.gogo-gadget-continue"
 fi
 "#,
                     counter_file.display(),
@@ -263,8 +263,8 @@ fi
             MockClaudeBehavior::Blocked => r#"#!/bin/bash
 # Mock Claude - blocked
 echo "❌ Cannot proceed"
-touch "$PWD/.jarvis-blocked"
-echo "Missing required dependencies" > "$PWD/.jarvis-blocked"
+touch "$PWD/.gogo-gadget-blocked"
+echo "Missing required dependencies" > "$PWD/.gogo-gadget-blocked"
 "#
             .to_string(),
             MockClaudeBehavior::ErrorOutput => r#"#!/bin/bash
@@ -306,14 +306,14 @@ exit 1
         let metadata = fs::metadata(&mock_claude).unwrap();
         assert!(metadata.permissions().mode() & 0o111 != 0);
 
-        // The mock creates .jarvis-satisfied - verify that behavior
+        // The mock creates .gogo-gadget-satisfied - verify that behavior
         let output = std::process::Command::new(&mock_claude)
             .current_dir(temp_dir.path())
             .output()
             .unwrap();
 
         assert!(output.status.success());
-        assert!(temp_dir.path().join(".jarvis-satisfied").exists());
+        assert!(temp_dir.path().join(".gogo-gadget-satisfied").exists());
     }
 
     #[test]
@@ -333,10 +333,10 @@ exit 1
 
             if i < 3 {
                 assert!(stdout.contains("Still working"));
-                assert!(temp_dir.path().join(".jarvis-continue").exists());
+                assert!(temp_dir.path().join(".gogo-gadget-continue").exists());
             } else {
                 assert!(stdout.contains("completed successfully"));
-                assert!(temp_dir.path().join(".jarvis-satisfied").exists());
+                assert!(temp_dir.path().join(".gogo-gadget-satisfied").exists());
             }
         }
     }
@@ -351,8 +351,8 @@ exit 1
             .output()
             .unwrap();
 
-        assert!(temp_dir.path().join(".jarvis-blocked").exists());
-        let blocked_content = fs::read_to_string(temp_dir.path().join(".jarvis-blocked")).unwrap();
+        assert!(temp_dir.path().join(".gogo-gadget-blocked").exists());
+        let blocked_content = fs::read_to_string(temp_dir.path().join(".gogo-gadget-blocked")).unwrap();
         assert!(blocked_content.contains("Missing required dependencies"));
     }
 }
@@ -393,7 +393,7 @@ mod checkpoint_tests {
                 .as_secs(),
         };
 
-        let checkpoint_dir = temp_dir.path().join(".jarvis-checkpoints");
+        let checkpoint_dir = temp_dir.path().join(".gogo-gadget-checkpoints");
         fs::create_dir_all(&checkpoint_dir).unwrap();
 
         let checkpoint_path = checkpoint_dir.join(format!("checkpoint_{}.json", iteration));
@@ -453,7 +453,7 @@ mod checkpoint_tests {
             create_checkpoint(&temp_dir, "Test task", i, &format!("Feedback {}", i));
         }
 
-        let checkpoint_dir = temp_dir.path().join(".jarvis-checkpoints");
+        let checkpoint_dir = temp_dir.path().join(".gogo-gadget-checkpoints");
         let entries: Vec<_> = fs::read_dir(&checkpoint_dir).unwrap().collect();
 
         assert_eq!(entries.len(), 5);
@@ -462,7 +462,7 @@ mod checkpoint_tests {
     #[test]
     fn test_checkpoint_cleanup_old() {
         let temp_dir = TempDir::new().unwrap();
-        let checkpoint_dir = temp_dir.path().join(".jarvis-checkpoints");
+        let checkpoint_dir = temp_dir.path().join(".gogo-gadget-checkpoints");
         fs::create_dir_all(&checkpoint_dir).unwrap();
 
         // Create checkpoints
@@ -496,7 +496,7 @@ mod checkpoint_tests {
             "// Partial implementation",
         )
         .unwrap();
-        fs::write(temp_dir.path().join(".jarvis-continue"), "More work needed").unwrap();
+        fs::write(temp_dir.path().join(".gogo-gadget-continue"), "More work needed").unwrap();
 
         // Create checkpoint
         let checkpoint_path =
@@ -505,7 +505,7 @@ mod checkpoint_tests {
         // Verify checkpoint can reference the state
         let checkpoint = load_checkpoint(&checkpoint_path).unwrap();
         assert!(checkpoint.working_dir.join("partial_work.rs").exists());
-        assert!(checkpoint.working_dir.join(".jarvis-continue").exists());
+        assert!(checkpoint.working_dir.join(".gogo-gadget-continue").exists());
     }
 }
 
@@ -790,7 +790,7 @@ mod coverage_tests {
 
     #[test]
     fn test_task_result_serialization() {
-        let result = jarvis_v2::TaskResult {
+        let result = gogo_gadget::TaskResult {
             success: true,
             iterations: 5,
             summary: Some("Task completed".to_string()),
@@ -897,10 +897,10 @@ mod signal_tests {
     use super::*;
     use std::fs;
 
-    const SATISFIED_FILE: &str = ".jarvis-satisfied";
-    const CONTINUE_FILE: &str = ".jarvis-continue";
-    const BLOCKED_FILE: &str = ".jarvis-blocked";
-    const WORKING_FILE: &str = ".jarvis-working";
+    const SATISFIED_FILE: &str = ".gogo-gadget-satisfied";
+    const CONTINUE_FILE: &str = ".gogo-gadget-continue";
+    const BLOCKED_FILE: &str = ".gogo-gadget-blocked";
+    const WORKING_FILE: &str = ".gogo-gadget-working";
 
     #[test]
     fn test_signal_file_creation() {
@@ -1050,7 +1050,7 @@ mod signal_tests {
         let signal_path = temp_dir.path().join(SATISFIED_FILE);
 
         // Simulate atomic write pattern
-        let temp_path = temp_dir.path().join(".jarvis-satisfied.tmp");
+        let temp_path = temp_dir.path().join(".gogo-gadget-satisfied.tmp");
         {
             let mut file = fs::File::create(&temp_path).unwrap();
             file.write_all(b"Task completed").unwrap();
@@ -1093,7 +1093,7 @@ mod signal_tests {
 
 mod checkpoint_edge_cases {
     use super::*;
-    use jarvis_v2::{Checkpoint, IterationAttempt, TaskState};
+    use gogo_gadget::{Checkpoint, IterationAttempt, TaskState};
     use std::fs;
 
     #[test]
@@ -1501,7 +1501,7 @@ mod verifier_edge_cases {
 // ============================================================================
 
 mod metrics_tests {
-    use jarvis_v2::ExecutionMetrics;
+    use gogo_gadget::ExecutionMetrics;
 
     #[test]
     fn test_metrics_empty() {
@@ -1562,7 +1562,7 @@ mod metrics_tests {
 // ============================================================================
 
 mod backoff_tests {
-    use jarvis_v2::BackoffConfig;
+    use gogo_gadget::BackoffConfig;
     use std::time::Duration;
 
     #[test]
@@ -1650,7 +1650,7 @@ mod backoff_tests {
 // ============================================================================
 
 mod output_status_tests {
-    use jarvis_v2::{ClaudeOutputStatus, ClaudeStructuredOutput};
+    use gogo_gadget::{ClaudeOutputStatus, ClaudeStructuredOutput};
 
     #[test]
     fn test_output_status_parsing() {
@@ -1715,7 +1715,7 @@ mod output_status_tests {
 // ============================================================================
 
 mod parallel_tests {
-    use jarvis_v2::ParallelConfig;
+    use gogo_gadget::ParallelConfig;
     use std::path::PathBuf;
 
     #[test]
@@ -1753,7 +1753,7 @@ mod parallel_tests {
 // ============================================================================
 
 mod gas_town_tests {
-    use jarvis_v2::{
+    use gogo_gadget::{
         CompressedResult, CompressedResultMetadata, ContextPolicy, OperationMode, RegistrationScope,
         SubagentConfig, SubagentExecutor, SubagentOutputFormat, SubagentRegistration,
     };
@@ -2075,7 +2075,7 @@ mod gas_town_tests {
     fn test_subagent_registration_command() {
         let reg = SubagentRegistration::default();
 
-        assert!(reg.command.contains("jarvis-rs"));
+        assert!(reg.command.contains("gogo-gadget"));
         assert!(reg.command.contains("--subagent-mode"));
     }
 
@@ -2198,7 +2198,7 @@ mod gas_town_tests {
 // ============================================================================
 
 mod extend_integration_tests {
-    use jarvis_v2::extend::{
+    use gogo_gadget::extend::{
         CapabilityGap, CapabilityRegistry, CapabilityType, GapDetector, HotLoader,
         SynthesisEngine, SynthesizedCapability, CapabilityVerifier, VerificationResult,
     };
@@ -2233,7 +2233,7 @@ mod extend_integration_tests {
         let mut capability = SynthesizedCapability::new(
             CapabilityType::Mcp,
             "weather-api",
-            PathBuf::from("/home/user/.jarvis/mcps/weather-api"),
+            PathBuf::from("/home/user/.gogo-gadget/mcps/weather-api"),
         );
         capability.config = serde_json::json!({
             "api_key_env": "OPENWEATHER_API_KEY",
@@ -2263,7 +2263,7 @@ mod extend_integration_tests {
         let mut capability = SynthesizedCapability::new(
             CapabilityType::Skill,
             "docker-compose",
-            PathBuf::from("/home/user/.jarvis/skills/docker-compose.md"),
+            PathBuf::from("/home/user/.gogo-gadget/skills/docker-compose.md"),
         );
         capability.config = serde_json::json!({
             "triggers": ["docker-compose", "containers", "orchestrate"]
@@ -2292,7 +2292,7 @@ mod extend_integration_tests {
         let mut capability = SynthesizedCapability::new(
             CapabilityType::Agent,
             "database-migration",
-            PathBuf::from("/home/user/.jarvis/agents/database-migration"),
+            PathBuf::from("/home/user/.gogo-gadget/agents/database-migration"),
         );
         capability.config = serde_json::json!({
             "model": "claude-3-opus",

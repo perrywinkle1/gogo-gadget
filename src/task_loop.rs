@@ -40,10 +40,10 @@ use tokio::time::timeout;
 use tracing::{debug, error, info, warn};
 
 /// Completion signal files
-const SATISFIED_FILE: &str = ".jarvis-satisfied";
-const CONTINUE_FILE: &str = ".jarvis-continue";
-const BLOCKED_FILE: &str = ".jarvis-blocked";
-const CHECKPOINT_FILE: &str = ".jarvis-checkpoint";
+const SATISFIED_FILE: &str = ".gogo-gadget-satisfied";
+const CONTINUE_FILE: &str = ".gogo-gadget-continue";
+const BLOCKED_FILE: &str = ".gogo-gadget-blocked";
+const CHECKPOINT_FILE: &str = ".gogo-gadget-checkpoint";
 
 /// Default timeout for a single iteration (5 minutes)
 const DEFAULT_ITERATION_TIMEOUT_SECS: u64 = 300;
@@ -73,7 +73,7 @@ impl Default for ExtensionConfig {
         Self {
             enabled: false,
             max_attempts: MAX_EXTENSION_ATTEMPTS,
-            registry_path: PathBuf::from(&home).join(".jarvis/capabilities.json"),
+            registry_path: PathBuf::from(&home).join(".gogo-gadget/capabilities.json"),
             skills_dir: PathBuf::from(&home).join(".claude/skills"),
         }
     }
@@ -1479,7 +1479,7 @@ mod tests {
         assert!(prompt.contains("Iteration"));
         assert!(prompt.contains("running until genuinely complete"));
         assert!(prompt.contains("DONE"));
-        assert!(prompt.contains(".jarvis-satisfied"));
+        assert!(prompt.contains(".gogo-gadget-satisfied"));
         assert!(prompt.contains("Structured Output"));
         // Should NOT have "of X" pattern for max iterations
         assert!(!prompt.contains(" of 5"));

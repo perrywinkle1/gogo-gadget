@@ -1,12 +1,12 @@
 ╔══════════════════════════════════════════════════════════════════════════════╗
-║                        JARVIS-V2 SYSTEM ARCHITECTURE                         ║
+║                       GOGOGADGET SYSTEM ARCHITECTURE                         ║
 ║                      Chief of Product Pattern (Overseer)                     ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
 
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │                                 USER INPUT                                   │
 │                                                                              │
-│    jarvis-v2 --swarm 3 "Add JWT authentication and PostgreSQL database"     │
+│    gogo-gadget --swarm 3 "Add JWT authentication and PostgreSQL database"   │
 │                                     │                                        │
 └─────────────────────────────────────┼────────────────────────────────────────┘
                                       ▼

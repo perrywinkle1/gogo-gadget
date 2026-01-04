@@ -1,8 +1,8 @@
-# Jarvis-RS Redesign Spec
+# GoGoGadget Redesign Spec
 
 ## Problem
 
-The current jarvis-rs is over-engineered around the wrong abstractions:
+The current gogo-gadget is over-engineered around the wrong abstractions:
 
 1. **Dumb regex-based "brain"** - 700 lines of pattern matching that fails basic cases (e.g., "build an app from scratch" scores 2/10 "trivial")
 
@@ -110,13 +110,13 @@ println!("Done. Project created at /path/to/screen-recorder");
 
 **Before:**
 ```
-jarvis-rs "task" --max-iterations 10 --format json --verbose --complexity-threshold 5
+gogo-gadget "task" --max-iterations 10 --format json --verbose --complexity-threshold 5
 ```
 
 **After:**
 ```
-jarvis-rs "task"
-jarvis-rs "task" --dir /path
+gogo-gadget "task"
+gogo-gadget "task" --dir /path
 ```
 
 That's it. No flags for internal behavior.
@@ -135,7 +135,7 @@ That's it. No flags for internal behavior.
 
 ## Success Criteria
 
-1. `jarvis-rs "build a screen recorder"` produces a working Xcode project
+1. `gogo-gadget "build a screen recorder"` produces a working Xcode project
 2. No "trivial" or "complexity 2/10" nonsense
 3. No "iteration 1 of 10" output
 4. Runs until the software actually works

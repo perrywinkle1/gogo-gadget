@@ -1,4 +1,4 @@
-# Jarvis-V2 System Architecture
+# GoGoGadget System Architecture
 
 ## High-Level Overview
 
@@ -8,7 +8,7 @@ flowchart TB
         Task[/"Task: Add JWT auth and PostgreSQL"/]
     end
 
-    subgraph Jarvis["🤖 Jarvis-V2"]
+    subgraph GoGoGadget["🤖 GoGoGadget"]
         subgraph Analysis["Task Analysis"]
             TA[Task Analyzer]
             TA --> |Complexity Score| Decision{Mode?}
@@ -89,7 +89,7 @@ flowchart TB
 sequenceDiagram
     autonumber
     participant U as 👤 User
-    participant J as 🤖 Jarvis CLI
+    participant J as 🤖 GoGoGadget CLI
     participant B as 🧠 Brain (Coordinator)
     participant C as 📋 SharedContext
     participant O as 🎨 Creative Overseer
@@ -98,7 +98,7 @@ sequenceDiagram
     participant S as 🔧 Synthesis Engine
     participant R as 📦 Registry
 
-    U->>J: jarvis-v2 --swarm 2 "Add JWT auth..."
+    U->>J: gogo-gadget --swarm 2 "Add JWT auth..."
     J->>B: execute_with_overseer(task)
 
     Note over B,C: Phase: Analyzing
@@ -223,7 +223,7 @@ flowchart LR
 
 ```mermaid
 mindmap
-    root((Jarvis-V2))
+    root((GoGoGadget))
         Brain
             Task Decomposition
             Agent Orchestration
@@ -290,11 +290,11 @@ src/
 
 ```bash
 # Run with Creative Overseer (default)
-jarvis-v2 --swarm 3 "Add authentication to the API"
+gogo-gadget --swarm 3 "Add authentication to the API"
 
 # Disable overseer for faster execution
-jarvis-v2 --swarm 3 --no-overseer "Quick fix"
+gogo-gadget --swarm 3 --no-overseer "Quick fix"
 
 # Standalone capability synthesis
-jarvis-v2 --overseer-only "Build a user management system"
+gogo-gadget --overseer-only "Build a user management system"
 ```

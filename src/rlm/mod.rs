@@ -18,7 +18,7 @@
 //! ## Usage
 //!
 //! ```rust,ignore
-//! use jarvis_rs::rlm::{RlmConfig, RlmExecutor};
+//! use gogo_gadget::rlm::{RlmConfig, RlmExecutor};
 //!
 //! let config = RlmConfig::default();
 //! let mut executor = RlmExecutor::new(config, working_dir);

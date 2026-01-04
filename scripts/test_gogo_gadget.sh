@@ -1,18 +1,18 @@
 #!/bin/bash
 #
-# Test script for the jarvis bash wrapper
+# Test script for the gogo-gadget bash wrapper
 #
 # Usage:
-#   ./scripts/test_jarvis.sh           # Run all tests
-#   ./scripts/test_jarvis.sh --quick   # Run quick tests only (no build)
-#   ./scripts/test_jarvis.sh --verbose # Show verbose output
+#   ./scripts/test_gogo_gadget.sh           # Run all tests
+#   ./scripts/test_gogo_gadget.sh --quick   # Run quick tests only (no build)
+#   ./scripts/test_gogo_gadget.sh --verbose # Show verbose output
 #
 
 set -euo pipefail
 
 # Resolve script location
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-JARVIS="$SCRIPT_DIR/jarvis"
+GADGET="$SCRIPT_DIR/gogo-gadget"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # Test counters
@@ -106,17 +106,17 @@ run_cmd() {
 
 test_script_exists() {
     test_start "Script exists"
-    if [[ -f "$JARVIS" ]]; then
-        test_pass "Script exists at $JARVIS"
+    if [[ -f "$GADGET" ]]; then
+        test_pass "Script exists at $GADGET"
     else
-        test_fail "Script exists" "Not found at $JARVIS"
+        test_fail "Script exists" "Not found at $GADGET"
         return 1
     fi
 }
 
 test_script_executable() {
     test_start "Script is executable"
-    if [[ -x "$JARVIS" ]]; then
+    if [[ -x "$GADGET" ]]; then
         test_pass "Script is executable"
     else
         test_fail "Script is executable" "Missing execute permission"
@@ -126,7 +126,7 @@ test_script_executable() {
 
 test_script_syntax() {
     test_start "Script syntax valid"
-    if bash -n "$JARVIS" 2>/dev/null; then
+    if bash -n "$GADGET" 2>/dev/null; then
         test_pass "Script syntax valid"
     else
         test_fail "Script syntax valid" "Bash syntax error"
@@ -141,7 +141,7 @@ test_script_syntax() {
 test_help_output() {
     test_start "Help output"
     local output
-    output=$(run_cmd "$JARVIS" --help)
+    output=$(run_cmd "$GADGET" --help)
 
     if echo "$output" | grep -q "USAGE:" && \
        echo "$output" | grep -q "OPTIONS:" && \
@@ -156,7 +156,7 @@ test_help_output() {
 test_help_short_flag() {
     test_start "Help -h flag"
     local output
-    output=$(run_cmd "$JARVIS" -h)
+    output=$(run_cmd "$GADGET" -h)
 
     if echo "$output" | grep -q "USAGE:"; then
         test_pass "Help -h flag works"
@@ -168,7 +168,7 @@ test_help_short_flag() {
 test_no_args_shows_help() {
     test_start "No args shows help"
     local output
-    output=$(run_cmd "$JARVIS")
+    output=$(run_cmd "$GADGET")
 
     if echo "$output" | grep -q "USAGE:"; then
         test_pass "No args shows help"
@@ -184,9 +184,9 @@ test_no_args_shows_help() {
 test_completions_bash() {
     test_start "Bash completions"
     local output
-    output=$(run_cmd "$JARVIS" completions bash)
+    output=$(run_cmd "$GADGET" completions bash)
 
-    if echo "$output" | grep -q "_jarvis_completions" && \
+    if echo "$output" | grep -q "_gogo_gadget_completions" && \
        echo "$output" | grep -q "complete -F"; then
         test_pass "Bash completions generated"
     else
@@ -198,10 +198,10 @@ test_completions_bash() {
 test_completions_zsh() {
     test_start "Zsh completions"
     local output
-    output=$(run_cmd "$JARVIS" completions zsh)
+    output=$(run_cmd "$GADGET" completions zsh)
 
-    if echo "$output" | grep -q "#compdef jarvis" && \
-       echo "$output" | grep -q "_jarvis()"; then
+    if echo "$output" | grep -q "#compdef gogo-gadget" && \
+       echo "$output" | grep -q "_gogo_gadget()"; then
         test_pass "Zsh completions generated"
     else
         test_fail "Zsh completions" "Invalid output"
@@ -212,9 +212,9 @@ test_completions_zsh() {
 test_completions_fish() {
     test_start "Fish completions"
     local output
-    output=$(run_cmd "$JARVIS" completions fish)
+    output=$(run_cmd "$GADGET" completions fish)
 
-    if echo "$output" | grep -q "complete -c jarvis"; then
+    if echo "$output" | grep -q "complete -c gogo-gadget"; then
         test_pass "Fish completions generated"
     else
         test_fail "Fish completions" "Invalid output"
@@ -225,7 +225,7 @@ test_completions_fish() {
 test_completions_invalid() {
     test_start "Invalid shell error"
     local exit_code=0
-    run_cmd "$JARVIS" completions invalid_shell >/dev/null 2>&1 || exit_code=$?
+    run_cmd "$GADGET" completions invalid_shell >/dev/null 2>&1 || exit_code=$?
 
     if [[ $exit_code -ne 0 ]]; then
         test_pass "Invalid shell returns error"
@@ -238,9 +238,9 @@ test_completion_files_exist() {
     test_start "Completion files exist"
     local missing=()
 
-    [[ ! -f "$SCRIPT_DIR/completions/jarvis.bash" ]] && missing+=("jarvis.bash")
-    [[ ! -f "$SCRIPT_DIR/completions/jarvis.zsh" ]] && missing+=("jarvis.zsh")
-    [[ ! -f "$SCRIPT_DIR/completions/jarvis.fish" ]] && missing+=("jarvis.fish")
+    [[ ! -f "$SCRIPT_DIR/completions/gogo-gadget.bash" ]] && missing+=("gogo-gadget.bash")
+    [[ ! -f "$SCRIPT_DIR/completions/gogo-gadget.zsh" ]] && missing+=("gogo-gadget.zsh")
+    [[ ! -f "$SCRIPT_DIR/completions/gogo-gadget.fish" ]] && missing+=("gogo-gadget.fish")
 
     if [[ ${#missing[@]} -eq 0 ]]; then
         test_pass "All completion files exist"
@@ -256,7 +256,7 @@ test_completion_files_exist() {
 test_status_no_task() {
     test_start "Status with no active task"
     local output
-    output=$(run_cmd "$JARVIS" status)
+    output=$(run_cmd "$GADGET" status)
 
     if echo "$output" | grep -qi "no active task\|status"; then
         test_pass "Status command works"
@@ -272,7 +272,7 @@ test_status_with_dir() {
     tmpdir=$(mktemp -d)
 
     local output
-    output=$(run_cmd "$JARVIS" status "$tmpdir")
+    output=$(run_cmd "$GADGET" status "$tmpdir")
 
     rm -rf "$tmpdir"
 
@@ -290,12 +290,12 @@ test_status_with_dir() {
 test_history_empty() {
     test_start "History with no entries"
 
-    # Use temp JARVIS_HOME to ensure empty history
+    # Use temp GADGET_HOME to ensure empty history
     local tmpdir
     tmpdir=$(mktemp -d)
 
     local output
-    output=$(JARVIS_HOME="$tmpdir" run_cmd "$JARVIS" history)
+    output=$(GADGET_HOME="$tmpdir" run_cmd "$GADGET" history)
 
     rm -rf "$tmpdir"
 
@@ -310,7 +310,7 @@ test_history_empty() {
 test_history_limit() {
     test_start "History with limit argument"
     local output
-    output=$(run_cmd "$JARVIS" history 5)
+    output=$(run_cmd "$GADGET" history 5)
 
     if echo "$output" | grep -qi "history\|showing"; then
         test_pass "History limit argument accepted"
@@ -330,7 +330,7 @@ test_resume_no_checkpoints() {
     cd "$tmpdir"
 
     local exit_code=0
-    run_cmd "$JARVIS" resume >/dev/null 2>&1 || exit_code=$?
+    run_cmd "$GADGET" resume >/dev/null 2>&1 || exit_code=$?
 
     cd - >/dev/null
     rm -rf "$tmpdir"
@@ -346,43 +346,43 @@ test_resume_no_checkpoints() {
 # Environment Variable Tests
 # ============================================================================
 
-test_env_jarvis_no_color() {
-    test_start "JARVIS_NO_COLOR environment variable"
+test_env_gadget_no_color() {
+    test_start "GADGET_NO_COLOR environment variable"
     local output
-    output=$(JARVIS_NO_COLOR=1 run_cmd "$JARVIS" --help)
+    output=$(GADGET_NO_COLOR=1 run_cmd "$GADGET" --help)
 
     # Output should not contain ANSI escape codes
     if ! echo "$output" | grep -q $'\033'; then
-        test_pass "JARVIS_NO_COLOR disables colors"
+        test_pass "GADGET_NO_COLOR disables colors"
     else
-        test_fail "JARVIS_NO_COLOR" "Colors still present in output"
+        test_fail "GADGET_NO_COLOR" "Colors still present in output"
     fi
 }
 
 test_env_invalid_max_iter() {
-    test_start "Invalid JARVIS_MAX_ITER"
+    test_start "Invalid GADGET_MAX_ITER"
     local exit_code=0
 
     # Use a simple task that won't actually run (because of validation error)
-    JARVIS_MAX_ITER="not_a_number" run_cmd "$JARVIS" "test" 2>&1 || exit_code=$?
+    GADGET_MAX_ITER="not_a_number" run_cmd "$GADGET" "test" 2>&1 || exit_code=$?
 
     if [[ $exit_code -ne 0 ]]; then
-        test_pass "Invalid JARVIS_MAX_ITER rejected"
+        test_pass "Invalid GADGET_MAX_ITER rejected"
     else
-        test_fail "Invalid JARVIS_MAX_ITER" "Should have failed"
+        test_fail "Invalid GADGET_MAX_ITER" "Should have failed"
     fi
 }
 
 test_env_invalid_output_fmt() {
-    test_start "Invalid JARVIS_OUTPUT_FMT"
+    test_start "Invalid GADGET_OUTPUT_FMT"
     local exit_code=0
 
-    JARVIS_OUTPUT_FMT="invalid" run_cmd "$JARVIS" "test" 2>&1 || exit_code=$?
+    GADGET_OUTPUT_FMT="invalid" run_cmd "$GADGET" "test" 2>&1 || exit_code=$?
 
     if [[ $exit_code -ne 0 ]]; then
-        test_pass "Invalid JARVIS_OUTPUT_FMT rejected"
+        test_pass "Invalid GADGET_OUTPUT_FMT rejected"
     else
-        test_fail "Invalid JARVIS_OUTPUT_FMT" "Should have failed"
+        test_fail "Invalid GADGET_OUTPUT_FMT" "Should have failed"
     fi
 }
 
@@ -393,7 +393,7 @@ test_env_valid_output_formats() {
     for fmt in text json markdown; do
         # Just test that the help command works with the env var
         local exit_code=0
-        JARVIS_OUTPUT_FMT="$fmt" run_cmd "$JARVIS" --help >/dev/null 2>&1 || exit_code=$?
+        GADGET_OUTPUT_FMT="$fmt" run_cmd "$GADGET" --help >/dev/null 2>&1 || exit_code=$?
         if [[ $exit_code -ne 0 ]]; then
             ((errors++))
         fi
@@ -413,7 +413,7 @@ test_env_valid_output_formats() {
 test_empty_task_rejected() {
     test_start "Empty task shows help"
     local output
-    output=$(run_cmd "$JARVIS" "" 2>&1)
+    output=$(run_cmd "$GADGET" "" 2>&1)
 
     # Empty string passed as task shows help (reasonable UX behavior)
     if echo "$output" | grep -q "USAGE:"; then
@@ -427,7 +427,7 @@ test_whitespace_task_rejected() {
     test_start "Whitespace-only task rejected"
     local exit_code=0
 
-    run_cmd "$JARVIS" "   " 2>&1 || exit_code=$?
+    run_cmd "$GADGET" "   " 2>&1 || exit_code=$?
 
     if [[ $exit_code -ne 0 ]]; then
         test_pass "Whitespace-only task rejected"
@@ -443,7 +443,7 @@ test_whitespace_task_rejected() {
 test_install_help_in_output() {
     test_start "Install command shows info"
     local output
-    output=$(run_cmd "$JARVIS" --help)
+    output=$(run_cmd "$GADGET" --help)
 
     if echo "$output" | grep -q -- "--install"; then
         test_pass "Install option documented in help"
@@ -464,7 +464,7 @@ test_special_chars_in_path() {
     mkdir -p "$test_dir"
 
     local output
-    output=$(cd "$test_dir" && run_cmd "$JARVIS" status)
+    output=$(cd "$test_dir" && run_cmd "$GADGET" status)
 
     rm -rf "$tmpdir"
 
@@ -478,9 +478,9 @@ test_special_chars_in_path() {
 test_version_output() {
     test_start "Version flag"
     local output
-    output=$(run_cmd "$JARVIS" --version 2>&1)
+    output=$(run_cmd "$GADGET" --version 2>&1)
 
-    if echo "$output" | grep -qi "jarvis"; then
+    if echo "$output" | grep -qi "gogo-gadget"; then
         test_pass "Version flag works"
     else
         test_fail "Version flag" "Unexpected output"
@@ -490,9 +490,9 @@ test_version_output() {
 test_version_short_flag() {
     test_start "Version -V flag"
     local output
-    output=$(run_cmd "$JARVIS" -V 2>&1)
+    output=$(run_cmd "$GADGET" -V 2>&1)
 
-    if echo "$output" | grep -qi "jarvis"; then
+    if echo "$output" | grep -qi "gogo-gadget"; then
         test_pass "Version -V flag works"
     else
         test_fail "Version -V flag" "Unexpected output"
@@ -505,7 +505,7 @@ test_version_short_flag() {
 
 echo ""
 echo -e "${BLUE}═══════════════════════════════════════════════════════════════${NC}"
-echo -e "${BLUE}  Jarvis Bash Wrapper Test Suite${NC}"
+echo -e "${BLUE}  GoGoGadget Bash Wrapper Test Suite${NC}"
 echo -e "${BLUE}═══════════════════════════════════════════════════════════════${NC}"
 echo ""
 
@@ -540,7 +540,7 @@ test_resume_no_checkpoints
 
 echo ""
 echo -e "${YELLOW}--- Environment Variable Tests ---${NC}"
-test_env_jarvis_no_color
+test_env_gadget_no_color
 test_env_invalid_max_iter
 test_env_invalid_output_fmt
 test_env_valid_output_formats

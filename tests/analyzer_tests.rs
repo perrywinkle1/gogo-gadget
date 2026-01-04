@@ -12,8 +12,8 @@
 //! Note: Full LLM integration tests require a running Claude instance
 //! and are marked with #[ignore] to avoid CI failures.
 
-use jarvis_v2::brain::{DetectedLanguage, TaskAnalyzer, TaskCategory, TaskAnalysis};
-use jarvis_v2::{Difficulty, ExecutionMode};
+use gogo_gadget::brain::{DetectedLanguage, TaskAnalyzer, TaskCategory, TaskAnalysis};
+use gogo_gadget::{Difficulty, ExecutionMode};
 use tempfile::TempDir;
 
 // ============================================================================

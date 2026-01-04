@@ -23,4 +23,4 @@ Assistant: I'll help you with that...
 
 ## Notes
 
-This skill was automatically synthesized by jarvis-v2.
+This skill was automatically synthesized by GoGoGadget.

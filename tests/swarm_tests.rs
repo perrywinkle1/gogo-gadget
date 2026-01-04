@@ -1,11 +1,11 @@
 //! Tests for swarm execution functionality
 
-use jarvis_v2::brain::{TaskAnalysis, TaskAnalyzer};
-use jarvis_v2::swarm::{
+use gogo_gadget::brain::{TaskAnalysis, TaskAnalyzer};
+use gogo_gadget::swarm::{
     DecompositionStrategy, SwarmConfig, SwarmConfigBuilder, SwarmCoordinator, SwarmResult,
     TaskDecomposer,
 };
-use jarvis_v2::{ExecutionMode, TaskResult};
+use gogo_gadget::{ExecutionMode, TaskResult};
 use std::path::PathBuf;
 use tempfile::TempDir;
 
@@ -94,7 +94,7 @@ fn test_task_decomposer_by_files_with_source_files() {
         .build();
 
     let mut analysis = TaskAnalysis::default();
-    analysis.detected_language = jarvis_v2::brain::DetectedLanguage::Rust;
+    analysis.detected_language = gogo_gadget::brain::DetectedLanguage::Rust;
 
     let subtasks = decomposer.decompose("Update all files", &analysis, &config);
 
@@ -121,7 +121,7 @@ fn test_swarm_result_to_task_result_success() {
     let swarm_result = SwarmResult {
         success: true,
         agent_results: vec![
-            jarvis_v2::swarm::AgentResult {
+            gogo_gadget::swarm::AgentResult {
                 agent_id: 0,
                 subtask: "Core implementation".to_string(),
                 result: TaskResult {
@@ -135,7 +135,7 @@ fn test_swarm_result_to_task_result_success() {
                 duration_ms: 5000,
                 compressed_result: None,
             },
-            jarvis_v2::swarm::AgentResult {
+            gogo_gadget::swarm::AgentResult {
                 agent_id: 1,
                 subtask: "Testing".to_string(),
                 result: TaskResult {
@@ -171,7 +171,7 @@ fn test_swarm_result_to_task_result_success() {
 fn test_swarm_result_to_task_result_failure() {
     let swarm_result = SwarmResult {
         success: false,
-        agent_results: vec![jarvis_v2::swarm::AgentResult {
+        agent_results: vec![gogo_gadget::swarm::AgentResult {
             agent_id: 0,
             subtask: "Failed task".to_string(),
             result: TaskResult {
@@ -206,7 +206,7 @@ fn test_swarm_result_with_conflicts() {
     let swarm_result = SwarmResult {
         success: false,
         agent_results: vec![
-            jarvis_v2::swarm::AgentResult {
+            gogo_gadget::swarm::AgentResult {
                 agent_id: 0,
                 subtask: "Agent 1".to_string(),
                 result: TaskResult {
@@ -220,7 +220,7 @@ fn test_swarm_result_with_conflicts() {
                 duration_ms: 1000,
                 compressed_result: None,
             },
-            jarvis_v2::swarm::AgentResult {
+            gogo_gadget::swarm::AgentResult {
                 agent_id: 1,
                 subtask: "Agent 2".to_string(),
                 result: TaskResult {
@@ -236,7 +236,7 @@ fn test_swarm_result_with_conflicts() {
             },
         ],
         summary: Some("Conflict detected".to_string()),
-        conflicts: vec![jarvis_v2::swarm::SwarmConflict {
+        conflicts: vec![gogo_gadget::swarm::SwarmConflict {
             file: PathBuf::from("src/main.rs"),
             agent_ids: vec![0, 1],
             description: "Both agents modified src/main.rs".to_string(),
@@ -310,7 +310,7 @@ fn test_decomposition_strategy_variants() {
 
 #[test]
 fn test_subtask_properties() {
-    let subtask = jarvis_v2::swarm::Subtask {
+    let subtask = gogo_gadget::swarm::Subtask {
         id: 0,
         description: "Test subtask".to_string(),
         focus: "Testing".to_string(),
@@ -331,7 +331,7 @@ fn test_subtask_properties() {
 
 #[test]
 fn test_agent_result_properties() {
-    let result = jarvis_v2::swarm::AgentResult {
+    let result = gogo_gadget::swarm::AgentResult {
         agent_id: 2,
         subtask: "Documentation".to_string(),
         result: TaskResult {
@@ -357,11 +357,11 @@ fn test_agent_result_properties() {
 // ============================================================================
 
 mod gas_town_swarm_tests {
-    use jarvis_v2::swarm::{
+    use gogo_gadget::swarm::{
         AgentResult, DecompositionStrategy, Subtask, SwarmConfig, SwarmConfigBuilder,
         SwarmConflict, SwarmResult,
     };
-    use jarvis_v2::{
+    use gogo_gadget::{
         CompressedResult, CompressedResultMetadata, ContextPolicy, OperationMode,
         SubagentConfig, SubagentOutputFormat, TaskResult,
     };

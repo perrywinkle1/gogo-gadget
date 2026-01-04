@@ -20,4 +20,4 @@ Delegate tasks related to {{SPECIALIZATION}} to this agent.
 
 ## Notes
 
-This agent was automatically synthesized by jarvis-v2.
+This agent was automatically synthesized by GoGoGadget.

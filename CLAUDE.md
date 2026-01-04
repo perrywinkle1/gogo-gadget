@@ -1,4 +1,4 @@
-# Jarvis-V2 with RLM
+# GoGoGadget with RLM
 
 Autonomous AI agent with Recursive Language Model for processing codebases exceeding context limits.
 
@@ -15,7 +15,7 @@ src/rlm/
 ├── chunker.rs     # Content splitting (structural/semantic/fixed)
 ├── context.rs     # RlmContext - explorable environment
 ├── aggregator.rs  # Result synthesis + deduplication
-├── daemon.rs      # Continuous mode (.jarvis-rlm-query signal files)
+├── daemon.rs      # Continuous mode (.gogo-gadget-rlm-query signal files)
 ├── cache.rs       # LRU cache for navigation decisions
 └── types.rs       # RlmConfig, Chunk, RlmResult
 ```
@@ -23,20 +23,20 @@ src/rlm/
 ## Commands
 - Build: `cargo build --release`
 - Test: `cargo test rlm`
-- Run: `jarvis-v2 --rlm --rlm-context <path> "<query>"`
+- Run: `gogo-gadget --rlm --rlm-context <path> "<query>"`
 
 ## RLM Use Cases
 
 | Use Case | Command |
 |----------|---------|
-| **Codebase Exploration** | `jarvis-v2 --rlm --rlm-context ./src "How does authentication work?"` |
-| **Security Audit** | `jarvis-v2 --rlm --rlm-context ./src "Find SQL injection vulnerabilities"` |
-| **Architecture Understanding** | `jarvis-v2 --rlm --rlm-context . "Map the data flow from API to database"` |
-| **Debugging** | `jarvis-v2 --rlm --rlm-context ./src "Why might the checkout fail silently?"` |
-| **Refactoring Analysis** | `jarvis-v2 --rlm --rlm-context ./src "What would break if I rename UserService?"` |
-| **Documentation Gen** | `jarvis-v2 --rlm --rlm-context ./src "Document all public APIs"` |
-| **Dependency Analysis** | `jarvis-v2 --rlm --rlm-context . "What external services does this app call?"` |
-| **Test Coverage** | `jarvis-v2 --rlm --rlm-context ./tests "What scenarios are not covered?"` |
+| **Codebase Exploration** | `gogo-gadget --rlm --rlm-context ./src "How does authentication work?"` |
+| **Security Audit** | `gogo-gadget --rlm --rlm-context ./src "Find SQL injection vulnerabilities"` |
+| **Architecture Understanding** | `gogo-gadget --rlm --rlm-context . "Map the data flow from API to database"` |
+| **Debugging** | `gogo-gadget --rlm --rlm-context ./src "Why might the checkout fail silently?"` |
+| **Refactoring Analysis** | `gogo-gadget --rlm --rlm-context ./src "What would break if I rename UserService?"` |
+| **Documentation Gen** | `gogo-gadget --rlm --rlm-context ./src "Document all public APIs"` |
+| **Dependency Analysis** | `gogo-gadget --rlm --rlm-context . "What external services does this app call?"` |
+| **Test Coverage** | `gogo-gadget --rlm --rlm-context ./tests "What scenarios are not covered?"` |
 
 ## CLI Flags
 - `--rlm` - Enable RLM mode

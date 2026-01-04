@@ -2,7 +2,7 @@
 
 ## Vision
 
-jarvis-v2 should be able to:
+gogo-gadget should be able to:
 1. Recognize when it would benefit from a new capability (MCP, SKILL.md, AGENT.md)
 2. Synthesize that capability
 3. Configure/register it
@@ -12,7 +12,7 @@ jarvis-v2 should be able to:
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                         JARVIS-V2                                │
+│                         GADGET-V2                                │
 │                                                                  │
 │  ┌──────────────────────────────────────────────────────────┐   │
 │  │                     META LOOP                             │   │
@@ -97,7 +97,7 @@ impl GapDetector {
 
 Tracks available and synthesized capabilities.
 
-**Storage:** `~/.jarvis/capabilities.json`
+**Storage:** `~/.gogo-gadget/capabilities.json`
 
 ```rust
 pub struct CapabilityRegistry {
@@ -264,7 +264,7 @@ src/
 ## Configuration
 
 ```toml
-# ~/.jarvis/config.toml
+# ~/.gogo-gadget/config.toml
 
 [self_extend]
 enabled = true

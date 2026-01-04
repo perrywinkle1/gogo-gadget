@@ -181,7 +181,7 @@ impl CapabilityVerifier {
     /// Create a new verifier
     pub fn new() -> Self {
         Self {
-            sandbox_dir: std::env::temp_dir().join("jarvis-verify"),
+            sandbox_dir: std::env::temp_dir().join("gogo-gadget-verify"),
             config: VerificationConfig::default(),
         }
     }

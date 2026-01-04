@@ -54,10 +54,10 @@ Synthesizes findings from multiple chunks:
 
 ### 6. RlmDaemon (`daemon.rs`)
 Continuous mode operation:
-- Watches for `.jarvis-rlm-query` signal files
+- Watches for `.gogo-gadget-rlm-query` signal files
 - Maintains RlmContext in memory
-- Writes responses to `.jarvis-rlm-response`
-- Respects `.jarvis-blocked` shutdown signal
+- Writes responses to `.gogo-gadget-rlm-response`
+- Respects `.gogo-gadget-blocked` shutdown signal
 
 ## Data Flow
 

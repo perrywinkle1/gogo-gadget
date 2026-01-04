@@ -134,9 +134,9 @@ impl RlmDaemon {
         context_path: PathBuf,
         shutdown_signal: ShutdownSignal,
     ) -> Self {
-        let query_file = working_dir.join(".jarvis-rlm-query");
-        let response_file = working_dir.join(".jarvis-rlm-response");
-        let state_file = working_dir.join(".jarvis-rlm-state");
+        let query_file = working_dir.join(".gogo-gadget-rlm-query");
+        let response_file = working_dir.join(".gogo-gadget-rlm-response");
+        let state_file = working_dir.join(".gogo-gadget-rlm-state");
 
         Self {
             rate_limiter: QueryQueue::new(config.rate_limit_per_minute),
@@ -186,7 +186,7 @@ impl RlmDaemon {
             }
 
             // Check for blocked file
-            if self.working_dir.join(".jarvis-blocked").exists() {
+            if self.working_dir.join(".gogo-gadget-blocked").exists() {
                 info!("Blocked file detected, exiting");
                 break;
             }

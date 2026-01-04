@@ -7,7 +7,7 @@
 //! - File modification tracking
 //! - Verification history
 
-use jarvis_v2::verify::{
+use gogo_gadget::verify::{
     BuildResult, DiffVerification, FileDiff, LlmCompletionCheck, TestResult,
     VerificationHistory, VerificationResult, Verifier,
     create_llm_completion_prompt, parse_llm_completion_response,
@@ -895,7 +895,7 @@ mod edge_case_tests {
 // =============================================================================
 
 mod capability_verification_tests {
-    use jarvis_v2::extend::{
+    use gogo_gadget::extend::{
         CapabilityType, CapabilityVerifier, SynthesizedCapability, VerificationConfig,
     };
     use std::fs;
@@ -1055,7 +1055,7 @@ Run the test command.
 
     #[test]
     fn test_quick_file_readable() {
-        use jarvis_v2::extend::verify::quick;
+        use gogo_gadget::extend::verify::quick;
 
         let temp_dir = TempDir::new().unwrap();
         let skill_path = temp_dir.path().join("quick-skill.md");
@@ -1072,7 +1072,7 @@ Run the test command.
 
     #[test]
     fn test_quick_markdown_has_sections() {
-        use jarvis_v2::extend::verify::quick;
+        use gogo_gadget::extend::verify::quick;
 
         let content = r#"# Test
 ## Trigger

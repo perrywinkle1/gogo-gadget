@@ -1,4 +1,4 @@
-//! Comprehensive unit tests for jarvis-rs task_loop module
+//! Comprehensive unit tests for gogo-gadget task_loop module
 //!
 //! Tests cover:
 //! - TaskLoop creation and builder pattern
@@ -13,9 +13,9 @@
 //! - Progress callback integration
 //! - Edge cases and error handling
 
-use jarvis_v2::task_loop::TaskLoop;
-use jarvis_v2::verify::Verifier;
-use jarvis_v2::*;
+use gogo_gadget::task_loop::TaskLoop;
+use gogo_gadget::verify::Verifier;
+use gogo_gadget::*;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -208,7 +208,7 @@ fn test_satisfied_signal_detection() {
 
     // Create the satisfied signal file
     fs::write(
-        temp_dir.path().join(".jarvis-satisfied"),
+        temp_dir.path().join(".gogo-gadget-satisfied"),
         "Task completed with full implementation",
     )
     .unwrap();
@@ -224,7 +224,7 @@ fn test_satisfied_signal_detection() {
     let _task_loop = TaskLoop::new(config, verifier);
 
     // The signal should be detected during execution
-    assert!(temp_dir.path().join(".jarvis-satisfied").exists());
+    assert!(temp_dir.path().join(".gogo-gadget-satisfied").exists());
 }
 
 #[test]
@@ -233,7 +233,7 @@ fn test_continue_signal_detection() {
 
     // Create the continue signal file
     fs::write(
-        temp_dir.path().join(".jarvis-continue"),
+        temp_dir.path().join(".gogo-gadget-continue"),
         "Need more work on error handling",
     )
     .unwrap();
@@ -248,7 +248,7 @@ fn test_continue_signal_detection() {
     let verifier = Verifier::new(None);
     let _task_loop = TaskLoop::new(config, verifier);
 
-    assert!(temp_dir.path().join(".jarvis-continue").exists());
+    assert!(temp_dir.path().join(".gogo-gadget-continue").exists());
 }
 
 #[test]
@@ -257,7 +257,7 @@ fn test_blocked_signal_detection() {
 
     // Create the blocked signal file
     fs::write(
-        temp_dir.path().join(".jarvis-blocked"),
+        temp_dir.path().join(".gogo-gadget-blocked"),
         "Cannot proceed: missing API credentials",
     )
     .unwrap();
@@ -272,7 +272,7 @@ fn test_blocked_signal_detection() {
     let verifier = Verifier::new(None);
     let _task_loop = TaskLoop::new(config, verifier);
 
-    assert!(temp_dir.path().join(".jarvis-blocked").exists());
+    assert!(temp_dir.path().join(".gogo-gadget-blocked").exists());
 }
 
 #[test]
@@ -280,24 +280,24 @@ fn test_signal_cleanup() {
     let temp_dir = TempDir::new().unwrap();
 
     // Create all signal files
-    fs::write(temp_dir.path().join(".jarvis-satisfied"), "test").unwrap();
-    fs::write(temp_dir.path().join(".jarvis-continue"), "test").unwrap();
-    fs::write(temp_dir.path().join(".jarvis-blocked"), "test").unwrap();
+    fs::write(temp_dir.path().join(".gogo-gadget-satisfied"), "test").unwrap();
+    fs::write(temp_dir.path().join(".gogo-gadget-continue"), "test").unwrap();
+    fs::write(temp_dir.path().join(".gogo-gadget-blocked"), "test").unwrap();
 
     // Verify they exist
-    assert!(temp_dir.path().join(".jarvis-satisfied").exists());
-    assert!(temp_dir.path().join(".jarvis-continue").exists());
-    assert!(temp_dir.path().join(".jarvis-blocked").exists());
+    assert!(temp_dir.path().join(".gogo-gadget-satisfied").exists());
+    assert!(temp_dir.path().join(".gogo-gadget-continue").exists());
+    assert!(temp_dir.path().join(".gogo-gadget-blocked").exists());
 
     // Manual cleanup simulation
-    fs::remove_file(temp_dir.path().join(".jarvis-satisfied")).ok();
-    fs::remove_file(temp_dir.path().join(".jarvis-continue")).ok();
-    fs::remove_file(temp_dir.path().join(".jarvis-blocked")).ok();
+    fs::remove_file(temp_dir.path().join(".gogo-gadget-satisfied")).ok();
+    fs::remove_file(temp_dir.path().join(".gogo-gadget-continue")).ok();
+    fs::remove_file(temp_dir.path().join(".gogo-gadget-blocked")).ok();
 
     // Verify cleaned up
-    assert!(!temp_dir.path().join(".jarvis-satisfied").exists());
-    assert!(!temp_dir.path().join(".jarvis-continue").exists());
-    assert!(!temp_dir.path().join(".jarvis-blocked").exists());
+    assert!(!temp_dir.path().join(".gogo-gadget-satisfied").exists());
+    assert!(!temp_dir.path().join(".gogo-gadget-continue").exists());
+    assert!(!temp_dir.path().join(".gogo-gadget-blocked").exists());
 }
 
 // ============================================================================
@@ -422,7 +422,7 @@ fn test_load_checkpoint_from_working_dir() {
 
     // Create a checkpoint file
     let checkpoint = Checkpoint::new("Previous task");
-    let path = temp_dir.path().join(".jarvis-checkpoint");
+    let path = temp_dir.path().join(".gogo-gadget-checkpoint");
     checkpoint.save(&path).unwrap();
 
     // Load it
@@ -445,7 +445,7 @@ fn test_load_checkpoint_corrupted() {
 
     // Create a corrupted checkpoint file
     fs::write(
-        temp_dir.path().join(".jarvis-checkpoint"),
+        temp_dir.path().join(".gogo-gadget-checkpoint"),
         "not valid json { broken",
     )
     .unwrap();
@@ -836,14 +836,14 @@ fn test_multiple_signal_files() {
     let temp_dir = TempDir::new().unwrap();
 
     // Create multiple signal files (should prioritize satisfied)
-    fs::write(temp_dir.path().join(".jarvis-satisfied"), "Done").unwrap();
-    fs::write(temp_dir.path().join(".jarvis-continue"), "More work").unwrap();
-    fs::write(temp_dir.path().join(".jarvis-blocked"), "Blocked").unwrap();
+    fs::write(temp_dir.path().join(".gogo-gadget-satisfied"), "Done").unwrap();
+    fs::write(temp_dir.path().join(".gogo-gadget-continue"), "More work").unwrap();
+    fs::write(temp_dir.path().join(".gogo-gadget-blocked"), "Blocked").unwrap();
 
     // All exist
-    assert!(temp_dir.path().join(".jarvis-satisfied").exists());
-    assert!(temp_dir.path().join(".jarvis-continue").exists());
-    assert!(temp_dir.path().join(".jarvis-blocked").exists());
+    assert!(temp_dir.path().join(".gogo-gadget-satisfied").exists());
+    assert!(temp_dir.path().join(".gogo-gadget-continue").exists());
+    assert!(temp_dir.path().join(".gogo-gadget-blocked").exists());
 }
 
 // ============================================================================

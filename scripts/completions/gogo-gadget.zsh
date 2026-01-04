@@ -1,10 +1,10 @@
-#compdef jarvis
-# Jarvis zsh completion
-# Add to ~/.zshrc: source /path/to/jarvis.zsh
-# Or: eval "$(jarvis completions zsh)"
+#compdef gogo-gadget
+# GoGoGadget zsh completion
+# Add to ~/.zshrc: source /path/to/gogo-gadget.zsh
+# Or: eval "$(gogo-gadget completions zsh)"
 # Or: fpath+=(/path/to/completions) && autoload -Uz compinit && compinit
 
-_jarvis() {
+_gogo_gadget() {
     local -a commands options
 
     commands=(
@@ -37,14 +37,14 @@ _jarvis() {
 
     case "$state" in
         command)
-            _describe -t commands 'jarvis commands' commands
+            _describe -t commands 'gogo-gadget commands' commands
             ;;
         args)
             case "${words[1]}" in
                 resume)
-                    if [[ -d ".jarvis-checkpoints" ]]; then
+                    if [[ -d ".gogo-gadget-checkpoints" ]]; then
                         local -a checkpoints
-                        checkpoints=(${(f)"$(ls .jarvis-checkpoints/*.json 2>/dev/null | xargs -I{} basename {})"})
+                        checkpoints=(${(f)"$(ls .gogo-gadget-checkpoints/*.json 2>/dev/null | xargs -I{} basename {})"})
                         checkpoints+=('latest:Most recent checkpoint')
                         _describe -t checkpoints 'checkpoints' checkpoints
                     else
@@ -65,4 +65,4 @@ _jarvis() {
     esac
 }
 
-compdef _jarvis jarvis
+compdef _gogo_gadget gogo-gadget

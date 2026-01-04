@@ -152,7 +152,7 @@ pub struct CreativeOverseer {
 impl CreativeOverseer {
     /// Create a new Creative Overseer
     pub fn new(config: OverseerConfig, registry: Arc<Mutex<CapabilityRegistry>>) -> Self {
-        let output_dir = config.working_dir.join(".jarvis").join("synthesized");
+        let output_dir = config.working_dir.join(".gogo-gadget").join("synthesized");
         let synthesis_engine = SynthesisEngine::new(&output_dir);
 
         Self {

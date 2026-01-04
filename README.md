@@ -1,8 +1,8 @@
-# Jarvis-V2
+# GoGoGadget
 
 **Autonomous AI Agent Framework with Self-Extending Capabilities**
 
-Jarvis-V2 is an evolution of jarvis-rs that adds the ability to recognize capability gaps during task execution and automatically synthesize new capabilities (MCPs, Skills, Agents) to fill those gaps.
+GoGoGadget is an autonomous AI agent framework that recognizes capability gaps during task execution and automatically synthesizes new capabilities (MCPs, Skills, Agents) to fill those gaps.
 
 ## Features
 
@@ -18,34 +18,34 @@ Jarvis-V2 is an evolution of jarvis-rs that adds the ability to recognize capabi
 
 ```bash
 # Clone the repository
-git clone git@github.com:YOUR_USERNAME/jarvis-rs-v2.git
-cd jarvis-rs-v2
+git clone git@github.com:YOUR_USERNAME/gogo-gadget.git
+cd gogo-gadget
 
 # Build
 cargo build --release
 
-# The binary will be at ./target/release/jarvis-v2
+# The binary will be at ./target/release/gogo-gadget
 ```
 
 ## Quick Start
 
 ```bash
 # Basic task execution
-./target/release/jarvis-v2 "Refactor the authentication module"
+./target/release/gogo-gadget "Refactor the authentication module"
 
 # With self-extending capabilities enabled
-./target/release/jarvis-v2 --self-extend "Fetch data from the GitHub API and analyze repository statistics"
+./target/release/gogo-gadget --self-extend "Fetch data from the GitHub API and analyze repository statistics"
 
 # Dry run to see task analysis
-./target/release/jarvis-v2 --dry-run "Your task here"
+./target/release/gogo-gadget --dry-run "Your task here"
 
 # Force swarm mode with 5 parallel agents
-./target/release/jarvis-v2 --swarm 5 "Implement a full CRUD API"
+./target/release/gogo-gadget --swarm 5 "Implement a full CRUD API"
 ```
 
 ## Self-Extending Capabilities
 
-The core innovation of Jarvis-V2 is its ability to extend itself. When enabled with `--self-extend`, the system:
+The core innovation of GoGoGadget is its ability to extend itself. When enabled with `--self-extend`, the system:
 
 1. **Detects Gaps**: Monitors Claude's output for signals like:
    - "I would need an MCP for..."
@@ -80,7 +80,7 @@ Task: "Fetch weather data for San Francisco"
 
 ```
 USAGE:
-    jarvis-v2 [OPTIONS] [TASK]
+    gogo-gadget [OPTIONS] [TASK]
 
 ARGUMENTS:
     [TASK]    The task to execute
@@ -116,7 +116,7 @@ OPTIONS:
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                         Jarvis-V2                                │
+│                         GoGoGadget                                │
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                  │
 │  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐       │
@@ -242,26 +242,26 @@ RLM enables processing of codebases exceeding LLM context windows through intell
 
 | Use Case | Command |
 |----------|---------|
-| **Codebase Exploration** | `jarvis-v2 --rlm --rlm-context ./src "How does authentication work?"` |
-| **Security Audit** | `jarvis-v2 --rlm --rlm-context ./src "Find SQL injection vulnerabilities"` |
-| **Architecture Understanding** | `jarvis-v2 --rlm --rlm-context . "Map the data flow from API to database"` |
-| **Debugging** | `jarvis-v2 --rlm --rlm-context ./src "Why might the checkout fail silently?"` |
-| **Refactoring Analysis** | `jarvis-v2 --rlm --rlm-context ./src "What would break if I rename UserService?"` |
-| **Documentation Gen** | `jarvis-v2 --rlm --rlm-context ./src "Document all public APIs"` |
-| **Dependency Analysis** | `jarvis-v2 --rlm --rlm-context . "What external services does this app call?"` |
-| **Test Coverage** | `jarvis-v2 --rlm --rlm-context ./tests "What scenarios are not covered?"` |
+| **Codebase Exploration** | `gogo-gadget --rlm --rlm-context ./src "How does authentication work?"` |
+| **Security Audit** | `gogo-gadget --rlm --rlm-context ./src "Find SQL injection vulnerabilities"` |
+| **Architecture Understanding** | `gogo-gadget --rlm --rlm-context . "Map the data flow from API to database"` |
+| **Debugging** | `gogo-gadget --rlm --rlm-context ./src "Why might the checkout fail silently?"` |
+| **Refactoring Analysis** | `gogo-gadget --rlm --rlm-context ./src "What would break if I rename UserService?"` |
+| **Documentation Gen** | `gogo-gadget --rlm --rlm-context ./src "Document all public APIs"` |
+| **Dependency Analysis** | `gogo-gadget --rlm --rlm-context . "What external services does this app call?"` |
+| **Test Coverage** | `gogo-gadget --rlm --rlm-context ./tests "What scenarios are not covered?"` |
 
 ### RLM CLI Flags
 
 ```bash
 # One-shot RLM query
-jarvis-v2 --rlm "Find security issues" --rlm-context ./src
+gogo-gadget --rlm "Find security issues" --rlm-context ./src
 
 # Continuous mode (keeps context in memory)
-jarvis-v2 --rlm --rlm-mode continuous --rlm-context ./src
+gogo-gadget --rlm --rlm-mode continuous --rlm-context ./src
 
 # With custom depth (default: 5)
-jarvis-v2 --rlm --rlm-depth 3 "How does auth work?"
+gogo-gadget --rlm --rlm-depth 3 "How does auth work?"
 ```
 
 | Flag | Description |
@@ -293,7 +293,7 @@ src/rlm/
 ├── chunker.rs     # Content splitting (structural/semantic/fixed)
 ├── context.rs     # RlmContext - explorable environment
 ├── aggregator.rs  # Result synthesis + deduplication (Opus 4.5)
-├── daemon.rs      # Continuous mode (.jarvis-rlm-query signal files)
+├── daemon.rs      # Continuous mode (.gogo-gadget-rlm-query signal files)
 ├── cache.rs       # LRU cache for navigation decisions
 └── types.rs       # RlmConfig, Chunk, RlmResult
 ```
@@ -356,10 +356,10 @@ Model Context Protocol servers that provide tool access to Claude.
 
 ```bash
 # List registered MCPs
-./target/release/jarvis-v2 --list-capabilities
+./target/release/gogo-gadget --list-capabilities
 
 # Synthesized MCPs are stored in:
-~/.jarvis/synthesized/mcps/
+~/.gogo-gadget/synthesized/mcps/
 ```
 
 ### Skills (SKILL.md)
@@ -396,9 +396,9 @@ specialization: Security vulnerability analysis
 
 ## Configuration
 
-Jarvis-V2 looks for configuration in:
-1. `.jarvis/config.json` (project-level)
-2. `~/.jarvis/config.json` (user-level)
+GoGoGadget looks for configuration in:
+1. `.gogo-gadget/config.json` (project-level)
+2. `~/.gogo-gadget/config.json` (user-level)
 
 ```json
 {
@@ -421,14 +421,14 @@ Jarvis-V2 looks for configuration in:
 
 ## Signal Files
 
-Jarvis-V2 uses signal files for agent communication:
+GoGoGadget uses signal files for agent communication:
 
 | File | Purpose |
 |------|---------|
-| `.jarvis-satisfied` | Agent signals task completion with summary |
-| `.jarvis-continue` | Agent needs more iterations |
-| `.jarvis-blocked` | Agent is blocked and cannot proceed |
-| `.jarvis-checkpoint` | Checkpoint for resume capability |
+| `.gogo-gadget-satisfied` | Agent signals task completion with summary |
+| `.gogo-gadget-continue` | Agent needs more iterations |
+| `.gogo-gadget-blocked` | Agent is blocked and cannot proceed |
+| `.gogo-gadget-checkpoint` | Checkpoint for resume capability |
 
 ## Shortcut Types Detected
 

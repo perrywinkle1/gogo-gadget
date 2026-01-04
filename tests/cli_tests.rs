@@ -1,4 +1,4 @@
-//! CLI Integration Tests for Jarvis-V2
+//! CLI Integration Tests for GoGoGadget
 //!
 //! Tests the command-line interface including:
 //! - Argument parsing with clap
@@ -18,13 +18,13 @@ use tempfile::TempDir;
 // Test Helpers
 // ============================================================================
 
-/// Get the path to the jarvis-v2 binary
-fn jarvis_binary() -> PathBuf {
+/// Get the path to the gogo-gadget binary
+fn gogo_gadget_binary() -> PathBuf {
     // Try debug build first
     let debug_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("target")
         .join("debug")
-        .join("jarvis-v2");
+        .join("gogo-gadget");
 
     if debug_path.exists() {
         return debug_path;
@@ -34,14 +34,14 @@ fn jarvis_binary() -> PathBuf {
     let release_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("target")
         .join("release")
-        .join("jarvis-v2");
+        .join("gogo-gadget");
 
     if release_path.exists() {
         return release_path;
     }
 
     // Fallback to cargo run
-    panic!("jarvis-v2 binary not found. Run `cargo build` first.");
+    panic!("gogo-gadget binary not found. Run `cargo build` first.");
 }
 
 /// Create a mock claude executable for testing
@@ -52,13 +52,13 @@ fn create_mock_claude(dir: &TempDir, behavior: &str) -> PathBuf {
     let script = match behavior {
         "success" => r#"#!/bin/bash
 echo "✅ Task completed successfully!"
-touch "$PWD/.jarvis-satisfied"
-echo "Done" > "$PWD/.jarvis-satisfied"
+touch "$PWD/.gogo-gadget-satisfied"
+echo "Done" > "$PWD/.gogo-gadget-satisfied"
 "#,
         "blocked" => r#"#!/bin/bash
 echo "❌ Cannot proceed - blocked"
-touch "$PWD/.jarvis-blocked"
-echo "Missing dependencies" > "$PWD/.jarvis-blocked"
+touch "$PWD/.gogo-gadget-blocked"
+echo "Missing dependencies" > "$PWD/.gogo-gadget-blocked"
 "#,
         "continue" => r#"#!/bin/bash
 COUNTER_FILE="$PWD/.mock_counter"
@@ -72,10 +72,10 @@ echo $COUNT > "$COUNTER_FILE"
 
 if [ $COUNT -ge 3 ]; then
     echo "✅ Task completed!"
-    touch "$PWD/.jarvis-satisfied"
+    touch "$PWD/.gogo-gadget-satisfied"
 else
     echo "⏳ Still working... (iteration $COUNT)"
-    touch "$PWD/.jarvis-continue"
+    touch "$PWD/.gogo-gadget-continue"
 fi
 "#,
         "error" => r#"#!/bin/bash
@@ -85,7 +85,7 @@ exit 1
         "slow" => r#"#!/bin/bash
 sleep 2
 echo "✅ Task completed!"
-touch "$PWD/.jarvis-satisfied"
+touch "$PWD/.gogo-gadget-satisfied"
 "#,
         _ => r#"#!/bin/bash
 echo "Unknown behavior"
@@ -111,17 +111,17 @@ mod arg_parsing {
 
     #[test]
     fn test_help_flag() {
-        let output = Command::new(jarvis_binary())
+        let output = Command::new(gogo_gadget_binary())
             .arg("--help")
             .output()
-            .expect("Failed to execute jarvis-v2");
+            .expect("Failed to execute gogo-gadget");
 
         let stdout = String::from_utf8_lossy(&output.stdout);
 
         // Should show help text
         assert!(
-            stdout.contains("jarvis-v2") || stdout.contains("Jarvis"),
-            "Help should mention jarvis-v2"
+            stdout.contains("gogo-gadget") || stdout.contains("GoGoGadget"),
+            "Help should mention gogo-gadget"
         );
         assert!(
             stdout.contains("--dir") || stdout.contains("-d"),
@@ -143,25 +143,25 @@ mod arg_parsing {
 
     #[test]
     fn test_version_flag() {
-        let output = Command::new(jarvis_binary())
+        let output = Command::new(gogo_gadget_binary())
             .arg("--version")
             .output()
-            .expect("Failed to execute jarvis-v2");
+            .expect("Failed to execute gogo-gadget");
 
         let stdout = String::from_utf8_lossy(&output.stdout);
 
         // Should show version
         assert!(
-            stdout.contains("0.1.0") || stdout.contains("jarvis-v2"),
+            stdout.contains("0.1.0") || stdout.contains("gogo-gadget"),
             "Version output should contain version number or name"
         );
     }
 
     #[test]
     fn test_missing_task_without_checkpoint_fails() {
-        let output = Command::new(jarvis_binary())
+        let output = Command::new(gogo_gadget_binary())
             .output()
-            .expect("Failed to execute jarvis-v2");
+            .expect("Failed to execute gogo-gadget");
 
         // Should fail without task or checkpoint
         assert!(
@@ -180,13 +180,13 @@ mod arg_parsing {
     fn test_dry_run_flag_accepted() {
         let temp_dir = TempDir::new().unwrap();
 
-        let output = Command::new(jarvis_binary())
+        let output = Command::new(gogo_gadget_binary())
             .arg("Test task")
             .arg("--dry-run")
             .arg("--dir")
             .arg(temp_dir.path())
             .output()
-            .expect("Failed to execute jarvis-v2");
+            .expect("Failed to execute gogo-gadget");
 
         // Dry run should succeed without actually executing
         assert!(output.status.success(), "Dry run should succeed");
@@ -196,13 +196,13 @@ mod arg_parsing {
     fn test_short_flags() {
         let temp_dir = TempDir::new().unwrap();
 
-        let output = Command::new(jarvis_binary())
+        let output = Command::new(gogo_gadget_binary())
             .arg("Test task")
             .arg("-d")
             .arg(temp_dir.path())
             .arg("--dry-run")
             .output()
-            .expect("Failed to execute jarvis-v2");
+            .expect("Failed to execute gogo-gadget");
 
         assert!(output.status.success(), "Should accept short flags");
     }
@@ -211,7 +211,7 @@ mod arg_parsing {
     fn test_output_format_json() {
         let temp_dir = TempDir::new().unwrap();
 
-        let output = Command::new(jarvis_binary())
+        let output = Command::new(gogo_gadget_binary())
             .arg("Test task")
             .arg("--output-format")
             .arg("json")
@@ -219,7 +219,7 @@ mod arg_parsing {
             .arg("--dir")
             .arg(temp_dir.path())
             .output()
-            .expect("Failed to execute jarvis-v2");
+            .expect("Failed to execute gogo-gadget");
 
         assert!(output.status.success(), "Should accept JSON output format");
 
@@ -235,7 +235,7 @@ mod arg_parsing {
     fn test_output_format_markdown() {
         let temp_dir = TempDir::new().unwrap();
 
-        let output = Command::new(jarvis_binary())
+        let output = Command::new(gogo_gadget_binary())
             .arg("Test task")
             .arg("--output-format")
             .arg("markdown")
@@ -243,7 +243,7 @@ mod arg_parsing {
             .arg("--dir")
             .arg(temp_dir.path())
             .output()
-            .expect("Failed to execute jarvis-v2");
+            .expect("Failed to execute gogo-gadget");
 
         assert!(
             output.status.success(),
@@ -255,14 +255,14 @@ mod arg_parsing {
     fn test_no_color_flag() {
         let temp_dir = TempDir::new().unwrap();
 
-        let output = Command::new(jarvis_binary())
+        let output = Command::new(gogo_gadget_binary())
             .arg("Test task")
             .arg("--no-color")
             .arg("--dry-run")
             .arg("--dir")
             .arg(temp_dir.path())
             .output()
-            .expect("Failed to execute jarvis-v2");
+            .expect("Failed to execute gogo-gadget");
 
         assert!(output.status.success(), "Should accept --no-color flag");
     }
@@ -271,7 +271,7 @@ mod arg_parsing {
     fn test_model_flag() {
         let temp_dir = TempDir::new().unwrap();
 
-        let output = Command::new(jarvis_binary())
+        let output = Command::new(gogo_gadget_binary())
             .arg("Test task")
             .arg("--model")
             .arg("claude-sonnet-4-20250514")
@@ -279,7 +279,7 @@ mod arg_parsing {
             .arg("--dir")
             .arg(temp_dir.path())
             .output()
-            .expect("Failed to execute jarvis-v2");
+            .expect("Failed to execute gogo-gadget");
 
         assert!(output.status.success(), "Should accept --model flag");
     }
@@ -288,7 +288,7 @@ mod arg_parsing {
     fn test_promise_flag() {
         let temp_dir = TempDir::new().unwrap();
 
-        let output = Command::new(jarvis_binary())
+        let output = Command::new(gogo_gadget_binary())
             .arg("Test task")
             .arg("--promise")
             .arg("TASK_COMPLETE")
@@ -296,7 +296,7 @@ mod arg_parsing {
             .arg("--dir")
             .arg(temp_dir.path())
             .output()
-            .expect("Failed to execute jarvis-v2");
+            .expect("Failed to execute gogo-gadget");
 
         assert!(output.status.success(), "Should accept --promise flag");
     }
@@ -305,7 +305,7 @@ mod arg_parsing {
     fn test_swarm_flag() {
         let temp_dir = TempDir::new().unwrap();
 
-        let output = Command::new(jarvis_binary())
+        let output = Command::new(gogo_gadget_binary())
             .arg("Test task")
             .arg("--swarm")
             .arg("3")
@@ -313,7 +313,7 @@ mod arg_parsing {
             .arg("--dir")
             .arg(temp_dir.path())
             .output()
-            .expect("Failed to execute jarvis-v2");
+            .expect("Failed to execute gogo-gadget");
 
         assert!(output.status.success(), "Should accept --swarm flag");
     }
@@ -322,14 +322,14 @@ mod arg_parsing {
     fn test_invalid_output_format_rejected() {
         let temp_dir = TempDir::new().unwrap();
 
-        let output = Command::new(jarvis_binary())
+        let output = Command::new(gogo_gadget_binary())
             .arg("Test task")
             .arg("--output-format")
             .arg("invalid_format")
             .arg("--dir")
             .arg(temp_dir.path())
             .output()
-            .expect("Failed to execute jarvis-v2");
+            .expect("Failed to execute gogo-gadget");
 
         assert!(
             !output.status.success(),
@@ -352,7 +352,7 @@ mod checkpoint_tests {
         let checkpoint_path = temp_dir.path().join("checkpoint.json");
 
         // Run with dry-run and checkpoint path
-        let output = Command::new(jarvis_binary())
+        let output = Command::new(gogo_gadget_binary())
             .arg("Test checkpoint creation")
             .arg("--checkpoint")
             .arg(&checkpoint_path)
@@ -360,7 +360,7 @@ mod checkpoint_tests {
             .arg("--dir")
             .arg(temp_dir.path())
             .output()
-            .expect("Failed to execute jarvis-v2");
+            .expect("Failed to execute gogo-gadget");
 
         assert!(output.status.success(), "Execution should succeed");
 
@@ -375,11 +375,11 @@ mod checkpoint_tests {
         let checkpoint_path = temp_dir.path().join("nonexistent_checkpoint.json");
 
         // Without a task, and with a nonexistent checkpoint, should fail
-        let output = Command::new(jarvis_binary())
+        let output = Command::new(gogo_gadget_binary())
             .arg("--checkpoint")
             .arg(&checkpoint_path)
             .output()
-            .expect("Failed to execute jarvis-v2");
+            .expect("Failed to execute gogo-gadget");
 
         // Should fail since checkpoint doesn't exist and no task provided
         assert!(
@@ -394,7 +394,7 @@ mod checkpoint_tests {
         let checkpoint_path = temp_dir.path().join("new_checkpoint.json");
 
         // With a task and nonexistent checkpoint, should create new
-        let output = Command::new(jarvis_binary())
+        let output = Command::new(gogo_gadget_binary())
             .arg("Create new checkpoint task")
             .arg("--checkpoint")
             .arg(&checkpoint_path)
@@ -402,7 +402,7 @@ mod checkpoint_tests {
             .arg("--dir")
             .arg(temp_dir.path())
             .output()
-            .expect("Failed to execute jarvis-v2");
+            .expect("Failed to execute gogo-gadget");
 
         assert!(
             output.status.success(),
@@ -434,11 +434,11 @@ mod checkpoint_tests {
         .unwrap();
 
         // Try to resume completed checkpoint
-        let output = Command::new(jarvis_binary())
+        let output = Command::new(gogo_gadget_binary())
             .arg("--checkpoint")
             .arg(&checkpoint_path)
             .output()
-            .expect("Failed to execute jarvis-v2");
+            .expect("Failed to execute gogo-gadget");
 
         // Should succeed without doing any work (already completed)
         assert!(
@@ -456,11 +456,11 @@ mod checkpoint_tests {
         fs::write(&checkpoint_path, "{ invalid json }").unwrap();
 
         // Try to resume from invalid checkpoint
-        let output = Command::new(jarvis_binary())
+        let output = Command::new(gogo_gadget_binary())
             .arg("--checkpoint")
             .arg(&checkpoint_path)
             .output()
-            .expect("Failed to execute jarvis-v2");
+            .expect("Failed to execute gogo-gadget");
 
         // Should fail due to invalid JSON
         assert!(
@@ -481,19 +481,19 @@ mod progress_output_tests {
     fn test_text_output_has_header() {
         let temp_dir = TempDir::new().unwrap();
 
-        let output = Command::new(jarvis_binary())
+        let output = Command::new(gogo_gadget_binary())
             .arg("Test task")
             .arg("--dry-run")
             .arg("--dir")
             .arg(temp_dir.path())
             .output()
-            .expect("Failed to execute jarvis-v2");
+            .expect("Failed to execute gogo-gadget");
 
         let stdout = String::from_utf8_lossy(&output.stdout);
 
         // Should contain header with version
         assert!(
-            stdout.contains("Jarvis-RS") || stdout.contains("v0.1"),
+            stdout.contains("GoGoGadget") || stdout.contains("v0.1"),
             "Output should contain header"
         );
     }
@@ -502,7 +502,7 @@ mod progress_output_tests {
     fn test_json_output_is_valid_json() {
         let temp_dir = TempDir::new().unwrap();
 
-        let output = Command::new(jarvis_binary())
+        let output = Command::new(gogo_gadget_binary())
             .arg("Test task")
             .arg("--dry-run")
             .arg("--output-format")
@@ -510,7 +510,7 @@ mod progress_output_tests {
             .arg("--dir")
             .arg(temp_dir.path())
             .output()
-            .expect("Failed to execute jarvis-v2");
+            .expect("Failed to execute gogo-gadget");
 
         let stdout = String::from_utf8_lossy(&output.stdout);
 
@@ -543,7 +543,7 @@ mod progress_output_tests {
     fn test_markdown_output_format() {
         let temp_dir = TempDir::new().unwrap();
 
-        let output = Command::new(jarvis_binary())
+        let output = Command::new(gogo_gadget_binary())
             .arg("Test task")
             .arg("--dry-run")
             .arg("--output-format")
@@ -551,7 +551,7 @@ mod progress_output_tests {
             .arg("--dir")
             .arg(temp_dir.path())
             .output()
-            .expect("Failed to execute jarvis-v2");
+            .expect("Failed to execute gogo-gadget");
 
         let stdout = String::from_utf8_lossy(&output.stdout);
 
@@ -566,13 +566,13 @@ mod progress_output_tests {
     fn test_analysis_output_shown() {
         let temp_dir = TempDir::new().unwrap();
 
-        let output = Command::new(jarvis_binary())
+        let output = Command::new(gogo_gadget_binary())
             .arg("Complex task with multiple file mentions: main.rs lib.rs test.rs")
             .arg("--dry-run")
             .arg("--dir")
             .arg(temp_dir.path())
             .output()
-            .expect("Failed to execute jarvis-v2");
+            .expect("Failed to execute gogo-gadget");
 
         let stdout = String::from_utf8_lossy(&output.stdout);
 
@@ -589,13 +589,13 @@ mod progress_output_tests {
     fn test_dry_run_message_shown() {
         let temp_dir = TempDir::new().unwrap();
 
-        let output = Command::new(jarvis_binary())
+        let output = Command::new(gogo_gadget_binary())
             .arg("Test task")
             .arg("--dry-run")
             .arg("--dir")
             .arg(temp_dir.path())
             .output()
-            .expect("Failed to execute jarvis-v2");
+            .expect("Failed to execute gogo-gadget");
 
         let stdout = String::from_utf8_lossy(&output.stdout);
 
@@ -610,14 +610,14 @@ mod progress_output_tests {
     fn test_no_color_removes_ansi_codes() {
         let temp_dir = TempDir::new().unwrap();
 
-        let output = Command::new(jarvis_binary())
+        let output = Command::new(gogo_gadget_binary())
             .arg("Test task")
             .arg("--dry-run")
             .arg("--no-color")
             .arg("--dir")
             .arg(temp_dir.path())
             .output()
-            .expect("Failed to execute jarvis-v2");
+            .expect("Failed to execute gogo-gadget");
 
         // The --no-color flag should be accepted without error
         assert!(output.status.success(), "Should accept --no-color flag");
@@ -633,13 +633,13 @@ mod error_handling {
 
     #[test]
     fn test_nonexistent_working_directory() {
-        let _output = Command::new(jarvis_binary())
+        let _output = Command::new(gogo_gadget_binary())
             .arg("Test task")
             .arg("--dir")
             .arg("/nonexistent/directory/path")
             .arg("--dry-run")
             .output()
-            .expect("Failed to execute jarvis-v2");
+            .expect("Failed to execute gogo-gadget");
 
         // Implementation may either fail or create directory
         // This tests that it handles the case gracefully
@@ -649,13 +649,13 @@ mod error_handling {
     fn test_empty_task_string() {
         let temp_dir = TempDir::new().unwrap();
 
-        let _output = Command::new(jarvis_binary())
+        let _output = Command::new(gogo_gadget_binary())
             .arg("")
             .arg("--dry-run")
             .arg("--dir")
             .arg(temp_dir.path())
             .output()
-            .expect("Failed to execute jarvis-v2");
+            .expect("Failed to execute gogo-gadget");
 
         // Empty task should either fail or be handled
     }
@@ -667,13 +667,13 @@ mod error_handling {
         // Create a very long task string
         let long_task: String = (0..10000).map(|_| "a").collect();
 
-        let output = Command::new(jarvis_binary())
+        let output = Command::new(gogo_gadget_binary())
             .arg(&long_task)
             .arg("--dry-run")
             .arg("--dir")
             .arg(temp_dir.path())
             .output()
-            .expect("Failed to execute jarvis-v2");
+            .expect("Failed to execute gogo-gadget");
 
         // Should handle long task gracefully
         assert!(
@@ -686,13 +686,13 @@ mod error_handling {
     fn test_unicode_in_task() {
         let temp_dir = TempDir::new().unwrap();
 
-        let output = Command::new(jarvis_binary())
+        let output = Command::new(gogo_gadget_binary())
             .arg("日本語タスク with emoji 🚀 and symbols €£¥")
             .arg("--dry-run")
             .arg("--dir")
             .arg(temp_dir.path())
             .output()
-            .expect("Failed to execute jarvis-v2");
+            .expect("Failed to execute gogo-gadget");
 
         assert!(
             output.status.success(),
@@ -704,13 +704,13 @@ mod error_handling {
     fn test_special_chars_in_task() {
         let temp_dir = TempDir::new().unwrap();
 
-        let output = Command::new(jarvis_binary())
+        let output = Command::new(gogo_gadget_binary())
             .arg("Task with 'quotes' and \"double quotes\" and $variables and `backticks`")
             .arg("--dry-run")
             .arg("--dir")
             .arg(temp_dir.path())
             .output()
-            .expect("Failed to execute jarvis-v2");
+            .expect("Failed to execute gogo-gadget");
 
         assert!(
             output.status.success(),
@@ -729,13 +729,13 @@ mod error_handling {
         perms.set_mode(0o444);
         fs::set_permissions(&readonly_dir, perms.clone()).unwrap();
 
-        let output = Command::new(jarvis_binary())
+        let output = Command::new(gogo_gadget_binary())
             .arg("Test task")
             .arg("--dir")
             .arg(&readonly_dir)
             .arg("--dry-run")
             .output()
-            .expect("Failed to execute jarvis-v2");
+            .expect("Failed to execute gogo-gadget");
 
         // Restore permissions for cleanup
         perms.set_mode(0o755);
@@ -757,27 +757,27 @@ mod execution_flow {
     fn test_dry_run_skips_execution() {
         let temp_dir = TempDir::new().unwrap();
 
-        let output = Command::new(jarvis_binary())
+        let output = Command::new(gogo_gadget_binary())
             .arg("Test task that should not execute")
             .arg("--dry-run")
             .arg("--dir")
             .arg(temp_dir.path())
             .output()
-            .expect("Failed to execute jarvis-v2");
+            .expect("Failed to execute gogo-gadget");
 
         assert!(output.status.success(), "Dry run should succeed");
 
         // No signal files should be created in dry run
         assert!(
-            !temp_dir.path().join(".jarvis-satisfied").exists(),
+            !temp_dir.path().join(".gogo-gadget-satisfied").exists(),
             "No signal files in dry run"
         );
         assert!(
-            !temp_dir.path().join(".jarvis-continue").exists(),
+            !temp_dir.path().join(".gogo-gadget-continue").exists(),
             "No signal files in dry run"
         );
         assert!(
-            !temp_dir.path().join(".jarvis-blocked").exists(),
+            !temp_dir.path().join(".gogo-gadget-blocked").exists(),
             "No signal files in dry run"
         );
     }
@@ -788,13 +788,13 @@ mod execution_flow {
         let work_dir = temp_dir.path().join("work_area");
         fs::create_dir(&work_dir).unwrap();
 
-        let output = Command::new(jarvis_binary())
+        let output = Command::new(gogo_gadget_binary())
             .arg("Test in work directory")
             .arg("--dir")
             .arg(&work_dir)
             .arg("--dry-run")
             .output()
-            .expect("Failed to execute jarvis-v2");
+            .expect("Failed to execute gogo-gadget");
 
         assert!(
             output.status.success(),
@@ -807,16 +807,16 @@ mod execution_flow {
         let temp_dir = TempDir::new().unwrap();
 
         // Simple task
-        let simple_output = Command::new(jarvis_binary())
+        let simple_output = Command::new(gogo_gadget_binary())
             .arg("Fix typo")
             .arg("--dry-run")
             .arg("--dir")
             .arg(temp_dir.path())
             .output()
-            .expect("Failed to execute jarvis-v2");
+            .expect("Failed to execute gogo-gadget");
 
         // Complex task
-        let complex_output = Command::new(jarvis_binary())
+        let complex_output = Command::new(gogo_gadget_binary())
             .arg(
                 "Build a complete system with main.rs, lib.rs, test.rs, api.py, frontend.tsx, \
                  config.yaml, Dockerfile, and comprehensive tests",
@@ -825,7 +825,7 @@ mod execution_flow {
             .arg("--dir")
             .arg(temp_dir.path())
             .output()
-            .expect("Failed to execute jarvis-v2");
+            .expect("Failed to execute gogo-gadget");
 
         // Both should succeed
         assert!(simple_output.status.success(), "Simple task should succeed");
@@ -840,7 +840,7 @@ mod execution_flow {
         let temp_dir = TempDir::new().unwrap();
 
         // First invocation
-        let output1 = Command::new(jarvis_binary())
+        let output1 = Command::new(gogo_gadget_binary())
             .arg("First task")
             .arg("--dry-run")
             .arg("--dir")
@@ -849,7 +849,7 @@ mod execution_flow {
             .expect("Failed first invocation");
 
         // Second invocation
-        let output2 = Command::new(jarvis_binary())
+        let output2 = Command::new(gogo_gadget_binary())
             .arg("Second task")
             .arg("--dry-run")
             .arg("--dir")
@@ -874,43 +874,43 @@ mod exit_codes {
     fn test_success_exit_code() {
         let temp_dir = TempDir::new().unwrap();
 
-        let output = Command::new(jarvis_binary())
+        let output = Command::new(gogo_gadget_binary())
             .arg("Test task")
             .arg("--dry-run")
             .arg("--dir")
             .arg(temp_dir.path())
             .output()
-            .expect("Failed to execute jarvis-v2");
+            .expect("Failed to execute gogo-gadget");
 
         assert_eq!(output.status.code(), Some(0), "Success should return 0");
     }
 
     #[test]
     fn test_help_exit_code() {
-        let output = Command::new(jarvis_binary())
+        let output = Command::new(gogo_gadget_binary())
             .arg("--help")
             .output()
-            .expect("Failed to execute jarvis-v2");
+            .expect("Failed to execute gogo-gadget");
 
         assert_eq!(output.status.code(), Some(0), "Help should return 0");
     }
 
     #[test]
     fn test_version_exit_code() {
-        let output = Command::new(jarvis_binary())
+        let output = Command::new(gogo_gadget_binary())
             .arg("--version")
             .output()
-            .expect("Failed to execute jarvis-v2");
+            .expect("Failed to execute gogo-gadget");
 
         assert_eq!(output.status.code(), Some(0), "Version should return 0");
     }
 
     #[test]
     fn test_invalid_args_exit_code() {
-        let output = Command::new(jarvis_binary())
+        let output = Command::new(gogo_gadget_binary())
             .arg("--invalid-flag-that-does-not-exist")
             .output()
-            .expect("Failed to execute jarvis-v2");
+            .expect("Failed to execute gogo-gadget");
 
         assert_ne!(
             output.status.code(),
@@ -921,9 +921,9 @@ mod exit_codes {
 
     #[test]
     fn test_missing_required_args_exit_code() {
-        let output = Command::new(jarvis_binary())
+        let output = Command::new(gogo_gadget_binary())
             .output()
-            .expect("Failed to execute jarvis-v2");
+            .expect("Failed to execute gogo-gadget");
 
         assert_ne!(
             output.status.code(),
@@ -944,14 +944,14 @@ mod environment_tests {
     fn test_respects_no_color_env() {
         let temp_dir = TempDir::new().unwrap();
 
-        let output = Command::new(jarvis_binary())
+        let output = Command::new(gogo_gadget_binary())
             .env("NO_COLOR", "1")
             .arg("Test task")
             .arg("--dry-run")
             .arg("--dir")
             .arg(temp_dir.path())
             .output()
-            .expect("Failed to execute jarvis-v2");
+            .expect("Failed to execute gogo-gadget");
 
         assert!(
             output.status.success(),
@@ -963,14 +963,14 @@ mod environment_tests {
     fn test_term_dumb_disables_spinner() {
         let temp_dir = TempDir::new().unwrap();
 
-        let output = Command::new(jarvis_binary())
+        let output = Command::new(gogo_gadget_binary())
             .env("TERM", "dumb")
             .arg("Test task")
             .arg("--dry-run")
             .arg("--dir")
             .arg(temp_dir.path())
             .output()
-            .expect("Failed to execute jarvis-v2");
+            .expect("Failed to execute gogo-gadget");
 
         // Should complete without spinner issues on dumb terminal
         assert!(output.status.success(), "Should work with TERM=dumb");
@@ -988,7 +988,7 @@ mod swarm_mode_tests {
     fn test_swarm_mode_accepted() {
         let temp_dir = TempDir::new().unwrap();
 
-        let output = Command::new(jarvis_binary())
+        let output = Command::new(gogo_gadget_binary())
             .arg("Complex multi-file task")
             .arg("--swarm")
             .arg("3")
@@ -996,7 +996,7 @@ mod swarm_mode_tests {
             .arg("--dir")
             .arg(temp_dir.path())
             .output()
-            .expect("Failed to execute jarvis-v2");
+            .expect("Failed to execute gogo-gadget");
 
         assert!(output.status.success(), "Swarm mode should be accepted");
     }
@@ -1005,7 +1005,7 @@ mod swarm_mode_tests {
     fn test_swarm_short_flag() {
         let temp_dir = TempDir::new().unwrap();
 
-        let output = Command::new(jarvis_binary())
+        let output = Command::new(gogo_gadget_binary())
             .arg("Task")
             .arg("-s")
             .arg("2")
@@ -1013,7 +1013,7 @@ mod swarm_mode_tests {
             .arg("--dir")
             .arg(temp_dir.path())
             .output()
-            .expect("Failed to execute jarvis-v2");
+            .expect("Failed to execute gogo-gadget");
 
         assert!(output.status.success(), "Short swarm flag -s should work");
     }
@@ -1030,14 +1030,14 @@ mod io_tests {
     fn test_piped_stdin_not_required() {
         let temp_dir = TempDir::new().unwrap();
 
-        let output = Command::new(jarvis_binary())
+        let output = Command::new(gogo_gadget_binary())
             .arg("Test task")
             .arg("--dry-run")
             .arg("--dir")
             .arg(temp_dir.path())
             .stdin(Stdio::null())
             .output()
-            .expect("Failed to execute jarvis-v2");
+            .expect("Failed to execute gogo-gadget");
 
         // Should work without stdin
         assert!(output.status.success(), "Should work without stdin");
@@ -1047,7 +1047,7 @@ mod io_tests {
     fn test_output_to_pipe() {
         let temp_dir = TempDir::new().unwrap();
 
-        let output = Command::new(jarvis_binary())
+        let output = Command::new(gogo_gadget_binary())
             .arg("Test task")
             .arg("--dry-run")
             .arg("--dir")
@@ -1056,7 +1056,7 @@ mod io_tests {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .output()
-            .expect("Failed to execute jarvis-v2");
+            .expect("Failed to execute gogo-gadget");
 
         // Should work with piped output
         assert!(output.status.success(), "Should work with piped output");
@@ -1074,14 +1074,14 @@ mod subagent_mode_tests {
     fn test_subagent_mode_flag_accepted() {
         let temp_dir = TempDir::new().unwrap();
 
-        let output = Command::new(jarvis_binary())
+        let output = Command::new(gogo_gadget_binary())
             .arg("Test task in subagent mode")
             .arg("--subagent-mode")
             .arg("--dry-run")
             .arg("--dir")
             .arg(temp_dir.path())
             .output()
-            .expect("Failed to execute jarvis-v2");
+            .expect("Failed to execute gogo-gadget");
 
         // Subagent mode should be accepted (may fail during execution without proper setup)
         // We're just testing the flag is recognized
@@ -1096,12 +1096,12 @@ mod subagent_mode_tests {
     fn test_register_subagent_flag() {
         let temp_dir = TempDir::new().unwrap();
 
-        let output = Command::new(jarvis_binary())
+        let output = Command::new(gogo_gadget_binary())
             .arg("--register-subagent")
             .arg("--dir")
             .arg(temp_dir.path())
             .output()
-            .expect("Failed to execute jarvis-v2");
+            .expect("Failed to execute gogo-gadget");
 
         // Registration should succeed
         assert!(
@@ -1112,7 +1112,7 @@ mod subagent_mode_tests {
         // Should print confirmation message
         let stdout = String::from_utf8_lossy(&output.stdout);
         assert!(
-            stdout.contains("jarvis-v2 registered"),
+            stdout.contains("gogo-gadget registered"),
             "Should confirm registration"
         );
 
@@ -1122,7 +1122,7 @@ mod subagent_mode_tests {
 
         // Verify settings content
         let content = fs::read_to_string(&settings_path).unwrap();
-        assert!(content.contains("jarvis-v2"), "Settings should contain jarvis-v2");
+        assert!(content.contains("gogo-gadget"), "Settings should contain gogo-gadget");
         assert!(content.contains("subagents"), "Settings should have subagents array");
     }
 
@@ -1131,7 +1131,7 @@ mod subagent_mode_tests {
         let temp_dir = TempDir::new().unwrap();
 
         // First register
-        let _ = Command::new(jarvis_binary())
+        let _ = Command::new(gogo_gadget_binary())
             .arg("--register-subagent")
             .arg("--dir")
             .arg(temp_dir.path())
@@ -1139,12 +1139,12 @@ mod subagent_mode_tests {
             .expect("Failed to register");
 
         // Then unregister
-        let output = Command::new(jarvis_binary())
+        let output = Command::new(gogo_gadget_binary())
             .arg("--unregister-subagent")
             .arg("--dir")
             .arg(temp_dir.path())
             .output()
-            .expect("Failed to execute jarvis-v2");
+            .expect("Failed to execute gogo-gadget");
 
         // Unregistration should succeed
         assert!(
@@ -1155,7 +1155,7 @@ mod subagent_mode_tests {
         // Should print confirmation message
         let stdout = String::from_utf8_lossy(&output.stdout);
         assert!(
-            stdout.contains("jarvis-v2 unregistered"),
+            stdout.contains("gogo-gadget unregistered"),
             "Should confirm unregistration"
         );
 
@@ -1163,12 +1163,12 @@ mod subagent_mode_tests {
         let settings_path = temp_dir.path().join(".claude").join("settings.json");
         if settings_path.exists() {
             let content = fs::read_to_string(&settings_path).unwrap();
-            // The file may still exist but jarvis-v2 should be removed from subagents
+            // The file may still exist but gogo-gadget should be removed from subagents
             let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
             if let Some(subagents) = parsed.get("subagents").and_then(|s| s.as_array()) {
                 assert!(
-                    subagents.iter().all(|s| s.get("name").and_then(|n| n.as_str()) != Some("jarvis-v2")),
-                    "jarvis-v2 should be removed from subagents"
+                    subagents.iter().all(|s| s.get("name").and_then(|n| n.as_str()) != Some("gogo-gadget")),
+                    "gogo-gadget should be removed from subagents"
                 );
             }
         }
@@ -1181,10 +1181,10 @@ mod subagent_mode_tests {
         // Test that --registration-scope global is accepted
         // Note: We don't actually want to modify ~/.claude/settings.json in tests
         // so we just verify the flag is recognized
-        let output = Command::new(jarvis_binary())
+        let output = Command::new(gogo_gadget_binary())
             .arg("--help")
             .output()
-            .expect("Failed to execute jarvis-v2");
+            .expect("Failed to execute gogo-gadget");
 
         let stdout = String::from_utf8_lossy(&output.stdout);
         assert!(
@@ -1201,7 +1201,7 @@ mod subagent_mode_tests {
         let config = r#"{"task":"test","parent_session_id":null,"max_depth":5,"current_depth":0,"context_policy":{"hide_failures":true,"hide_intermediates":true,"include_commit":true,"max_summary_length":500,"include_diffs":false},"output_format":"Json"}"#;
 
         // The flag should be recognized even if execution fails due to dry-run not being compatible
-        let output = Command::new(jarvis_binary())
+        let output = Command::new(gogo_gadget_binary())
             .arg("Test task")
             .arg("--subagent-mode")
             .arg("--subagent-config")
@@ -1209,7 +1209,7 @@ mod subagent_mode_tests {
             .arg("--dir")
             .arg(temp_dir.path())
             .output()
-            .expect("Failed to execute jarvis-v2");
+            .expect("Failed to execute gogo-gadget");
 
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(
@@ -1223,14 +1223,14 @@ mod subagent_mode_tests {
         let temp_dir = TempDir::new().unwrap();
 
         // Register twice
-        let _ = Command::new(jarvis_binary())
+        let _ = Command::new(gogo_gadget_binary())
             .arg("--register-subagent")
             .arg("--dir")
             .arg(temp_dir.path())
             .output()
             .expect("Failed first register");
 
-        let output = Command::new(jarvis_binary())
+        let output = Command::new(gogo_gadget_binary())
             .arg("--register-subagent")
             .arg("--dir")
             .arg(temp_dir.path())
@@ -1247,11 +1247,11 @@ mod subagent_mode_tests {
         let content = fs::read_to_string(&settings_path).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
         if let Some(subagents) = parsed.get("subagents").and_then(|s| s.as_array()) {
-            let jarvis_count = subagents
+            let gadget_count = subagents
                 .iter()
-                .filter(|s| s.get("name").and_then(|n| n.as_str()) == Some("jarvis-v2"))
+                .filter(|s| s.get("name").and_then(|n| n.as_str()) == Some("gogo-gadget"))
                 .count();
-            assert_eq!(jarvis_count, 1, "Should have exactly one jarvis-v2 entry");
+            assert_eq!(gadget_count, 1, "Should have exactly one gogo-gadget entry");
         }
     }
 
@@ -1260,12 +1260,12 @@ mod subagent_mode_tests {
         let temp_dir = TempDir::new().unwrap();
 
         // Unregister without ever registering
-        let output = Command::new(jarvis_binary())
+        let output = Command::new(gogo_gadget_binary())
             .arg("--unregister-subagent")
             .arg("--dir")
             .arg(temp_dir.path())
             .output()
-            .expect("Failed to execute jarvis-v2");
+            .expect("Failed to execute gogo-gadget");
 
         // Should succeed (no-op)
         assert!(
@@ -1286,14 +1286,14 @@ mod self_extend_tests {
     fn test_self_extend_flag_accepted() {
         let temp_dir = TempDir::new().unwrap();
 
-        let output = Command::new(jarvis_binary())
+        let output = Command::new(gogo_gadget_binary())
             .arg("Test task with self-extend")
             .arg("--self-extend")
             .arg("--dry-run")
             .arg("--dir")
             .arg(temp_dir.path())
             .output()
-            .expect("Failed to execute jarvis-v2");
+            .expect("Failed to execute gogo-gadget");
 
         // Self-extend flag should be accepted
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -1308,14 +1308,14 @@ mod self_extend_tests {
     fn test_no_self_extend_flag_accepted() {
         let temp_dir = TempDir::new().unwrap();
 
-        let output = Command::new(jarvis_binary())
+        let output = Command::new(gogo_gadget_binary())
             .arg("Test task without self-extend")
             .arg("--no-self-extend")
             .arg("--dry-run")
             .arg("--dir")
             .arg(temp_dir.path())
             .output()
-            .expect("Failed to execute jarvis-v2");
+            .expect("Failed to execute gogo-gadget");
 
         // No-self-extend flag should be accepted
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -1330,13 +1330,13 @@ mod self_extend_tests {
     fn test_detect_gaps_only_flag() {
         let temp_dir = TempDir::new().unwrap();
 
-        let output = Command::new(jarvis_binary())
+        let output = Command::new(gogo_gadget_binary())
             .arg("I need an MCP for GitHub API access")
             .arg("--detect-gaps-only")
             .arg("--dir")
             .arg(temp_dir.path())
             .output()
-            .expect("Failed to execute jarvis-v2");
+            .expect("Failed to execute gogo-gadget");
 
         // Detect-gaps-only flag should be accepted
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -1358,10 +1358,10 @@ mod self_extend_tests {
 
     #[test]
     fn test_self_extend_help_shown() {
-        let output = Command::new(jarvis_binary())
+        let output = Command::new(gogo_gadget_binary())
             .arg("--help")
             .output()
-            .expect("Failed to execute jarvis-v2");
+            .expect("Failed to execute gogo-gadget");
 
         let stdout = String::from_utf8_lossy(&output.stdout);
 
@@ -1377,7 +1377,7 @@ mod self_extend_tests {
         let temp_dir = TempDir::new().unwrap();
 
         // When both flags are present, --no-self-extend should take precedence
-        let output = Command::new(jarvis_binary())
+        let output = Command::new(gogo_gadget_binary())
             .arg("Test task with conflicting flags")
             .arg("--self-extend")
             .arg("--no-self-extend")
@@ -1385,7 +1385,7 @@ mod self_extend_tests {
             .arg("--dir")
             .arg(temp_dir.path())
             .output()
-            .expect("Failed to execute jarvis-v2");
+            .expect("Failed to execute gogo-gadget");
 
         // Should accept both flags (--no-self-extend takes precedence)
         assert!(output.status.success(), "Should handle both flags");
@@ -1395,12 +1395,12 @@ mod self_extend_tests {
     fn test_detect_gaps_only_without_task() {
         let temp_dir = TempDir::new().unwrap();
 
-        let output = Command::new(jarvis_binary())
+        let output = Command::new(gogo_gadget_binary())
             .arg("--detect-gaps-only")
             .arg("--dir")
             .arg(temp_dir.path())
             .output()
-            .expect("Failed to execute jarvis-v2");
+            .expect("Failed to execute gogo-gadget");
 
         // Should fail without a task
         assert!(
@@ -1414,13 +1414,13 @@ mod self_extend_tests {
         let temp_dir = TempDir::new().unwrap();
 
         // Task that mentions needing MCP
-        let output = Command::new(jarvis_binary())
+        let output = Command::new(gogo_gadget_binary())
             .arg("I would need an MCP server for accessing the Slack API")
             .arg("--detect-gaps-only")
             .arg("--dir")
             .arg(temp_dir.path())
             .output()
-            .expect("Failed to execute jarvis-v2");
+            .expect("Failed to execute gogo-gadget");
 
         assert!(output.status.success(), "Should succeed analyzing for gaps");
 
@@ -1437,13 +1437,13 @@ mod self_extend_tests {
         let temp_dir = TempDir::new().unwrap();
 
         // Task that mentions needing a skill
-        let output = Command::new(jarvis_binary())
+        let output = Command::new(gogo_gadget_binary())
             .arg("I need a skill for running database migrations")
             .arg("--detect-gaps-only")
             .arg("--dir")
             .arg(temp_dir.path())
             .output()
-            .expect("Failed to execute jarvis-v2");
+            .expect("Failed to execute gogo-gadget");
 
         assert!(output.status.success(), "Should succeed analyzing for gaps");
     }
@@ -1453,13 +1453,13 @@ mod self_extend_tests {
         let temp_dir = TempDir::new().unwrap();
 
         // Task that mentions needing an agent
-        let output = Command::new(jarvis_binary())
+        let output = Command::new(gogo_gadget_binary())
             .arg("I would benefit from an agent specialized in security auditing")
             .arg("--detect-gaps-only")
             .arg("--dir")
             .arg(temp_dir.path())
             .output()
-            .expect("Failed to execute jarvis-v2");
+            .expect("Failed to execute gogo-gadget");
 
         assert!(output.status.success(), "Should succeed analyzing for gaps");
     }
@@ -1468,7 +1468,7 @@ mod self_extend_tests {
     fn test_self_extend_combined_with_swarm() {
         let temp_dir = TempDir::new().unwrap();
 
-        let output = Command::new(jarvis_binary())
+        let output = Command::new(gogo_gadget_binary())
             .arg("Complex task needing swarm and self-extend")
             .arg("--swarm")
             .arg("2")
@@ -1477,7 +1477,7 @@ mod self_extend_tests {
             .arg("--dir")
             .arg(temp_dir.path())
             .output()
-            .expect("Failed to execute jarvis-v2");
+            .expect("Failed to execute gogo-gadget");
 
         // Both flags should be accepted together
         assert!(

@@ -1,4 +1,4 @@
-//! Comprehensive unit tests for jarvis-rs core library types
+//! Comprehensive unit tests for gogo-gadget core library types
 //!
 //! Tests cover:
 //! - Config and default values
@@ -15,7 +15,7 @@
 //! - ProgressEvent and ProgressEventType
 //! - Edge cases and error handling
 
-use jarvis_v2::*;
+use gogo_gadget::*;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -1132,36 +1132,36 @@ fn test_progress_event_chaining() {
 
 #[test]
 fn test_operation_mode_default() {
-    let mode = jarvis_v2::OperationMode::default();
-    assert_eq!(mode, jarvis_v2::OperationMode::Standalone);
+    let mode = gogo_gadget::OperationMode::default();
+    assert_eq!(mode, gogo_gadget::OperationMode::Standalone);
 }
 
 #[test]
 fn test_operation_mode_variants() {
-    let standalone = jarvis_v2::OperationMode::Standalone;
-    let subagent = jarvis_v2::OperationMode::Subagent;
+    let standalone = gogo_gadget::OperationMode::Standalone;
+    let subagent = gogo_gadget::OperationMode::Subagent;
 
-    assert_eq!(standalone, jarvis_v2::OperationMode::Standalone);
-    assert_eq!(subagent, jarvis_v2::OperationMode::Subagent);
+    assert_eq!(standalone, gogo_gadget::OperationMode::Standalone);
+    assert_eq!(subagent, gogo_gadget::OperationMode::Subagent);
     assert_ne!(standalone, subagent);
 }
 
 #[test]
 fn test_operation_mode_serialization() {
-    let standalone = jarvis_v2::OperationMode::Standalone;
+    let standalone = gogo_gadget::OperationMode::Standalone;
     let json = serde_json::to_string(&standalone).unwrap();
-    let deserialized: jarvis_v2::OperationMode = serde_json::from_str(&json).unwrap();
-    assert_eq!(deserialized, jarvis_v2::OperationMode::Standalone);
+    let deserialized: gogo_gadget::OperationMode = serde_json::from_str(&json).unwrap();
+    assert_eq!(deserialized, gogo_gadget::OperationMode::Standalone);
 
-    let subagent = jarvis_v2::OperationMode::Subagent;
+    let subagent = gogo_gadget::OperationMode::Subagent;
     let json = serde_json::to_string(&subagent).unwrap();
-    let deserialized: jarvis_v2::OperationMode = serde_json::from_str(&json).unwrap();
-    assert_eq!(deserialized, jarvis_v2::OperationMode::Subagent);
+    let deserialized: gogo_gadget::OperationMode = serde_json::from_str(&json).unwrap();
+    assert_eq!(deserialized, gogo_gadget::OperationMode::Subagent);
 }
 
 #[test]
 fn test_subagent_config_default() {
-    let config = jarvis_v2::SubagentConfig::default();
+    let config = gogo_gadget::SubagentConfig::default();
 
     assert!(config.task.is_empty());
     assert!(config.parent_session_id.is_none());
@@ -1171,13 +1171,13 @@ fn test_subagent_config_default() {
 
 #[test]
 fn test_subagent_config_custom() {
-    let config = jarvis_v2::SubagentConfig {
+    let config = gogo_gadget::SubagentConfig {
         task: "Build REST API".to_string(),
         parent_session_id: Some("session-123".to_string()),
         max_depth: 3,
         current_depth: 1,
-        context_policy: jarvis_v2::ContextPolicy::default(),
-        output_format: jarvis_v2::SubagentOutputFormat::Json,
+        context_policy: gogo_gadget::ContextPolicy::default(),
+        output_format: gogo_gadget::SubagentOutputFormat::Json,
     };
 
     assert_eq!(config.task, "Build REST API");
@@ -1188,17 +1188,17 @@ fn test_subagent_config_custom() {
 
 #[test]
 fn test_subagent_config_serialization() {
-    let config = jarvis_v2::SubagentConfig {
+    let config = gogo_gadget::SubagentConfig {
         task: "Implement feature".to_string(),
         parent_session_id: Some("parent-456".to_string()),
         max_depth: 4,
         current_depth: 2,
-        context_policy: jarvis_v2::ContextPolicy::default(),
-        output_format: jarvis_v2::SubagentOutputFormat::Markdown,
+        context_policy: gogo_gadget::ContextPolicy::default(),
+        output_format: gogo_gadget::SubagentOutputFormat::Markdown,
     };
 
     let json = serde_json::to_string(&config).unwrap();
-    let deserialized: jarvis_v2::SubagentConfig = serde_json::from_str(&json).unwrap();
+    let deserialized: gogo_gadget::SubagentConfig = serde_json::from_str(&json).unwrap();
 
     assert_eq!(deserialized.task, config.task);
     assert_eq!(deserialized.max_depth, config.max_depth);
@@ -1207,7 +1207,7 @@ fn test_subagent_config_serialization() {
 
 #[test]
 fn test_context_policy_default() {
-    let policy = jarvis_v2::ContextPolicy::default();
+    let policy = gogo_gadget::ContextPolicy::default();
 
     assert!(policy.hide_failures);
     assert!(policy.hide_intermediates);
@@ -1218,7 +1218,7 @@ fn test_context_policy_default() {
 
 #[test]
 fn test_context_policy_custom() {
-    let policy = jarvis_v2::ContextPolicy {
+    let policy = gogo_gadget::ContextPolicy {
         hide_failures: false,
         hide_intermediates: false,
         include_commit: false,
@@ -1235,7 +1235,7 @@ fn test_context_policy_custom() {
 
 #[test]
 fn test_context_policy_serialization() {
-    let policy = jarvis_v2::ContextPolicy {
+    let policy = gogo_gadget::ContextPolicy {
         hide_failures: true,
         hide_intermediates: false,
         include_commit: true,
@@ -1244,7 +1244,7 @@ fn test_context_policy_serialization() {
     };
 
     let json = serde_json::to_string(&policy).unwrap();
-    let deserialized: jarvis_v2::ContextPolicy = serde_json::from_str(&json).unwrap();
+    let deserialized: gogo_gadget::ContextPolicy = serde_json::from_str(&json).unwrap();
 
     assert_eq!(deserialized.hide_failures, policy.hide_failures);
     assert_eq!(deserialized.hide_intermediates, policy.hide_intermediates);
@@ -1255,19 +1255,19 @@ fn test_context_policy_serialization() {
 
 #[test]
 fn test_subagent_output_format_default() {
-    let format = jarvis_v2::SubagentOutputFormat::default();
-    assert_eq!(format, jarvis_v2::SubagentOutputFormat::Json);
+    let format = gogo_gadget::SubagentOutputFormat::default();
+    assert_eq!(format, gogo_gadget::SubagentOutputFormat::Json);
 }
 
 #[test]
 fn test_subagent_output_format_variants() {
-    let json = jarvis_v2::SubagentOutputFormat::Json;
-    let text = jarvis_v2::SubagentOutputFormat::Text;
-    let markdown = jarvis_v2::SubagentOutputFormat::Markdown;
+    let json = gogo_gadget::SubagentOutputFormat::Json;
+    let text = gogo_gadget::SubagentOutputFormat::Text;
+    let markdown = gogo_gadget::SubagentOutputFormat::Markdown;
 
-    assert_eq!(json, jarvis_v2::SubagentOutputFormat::Json);
-    assert_eq!(text, jarvis_v2::SubagentOutputFormat::Text);
-    assert_eq!(markdown, jarvis_v2::SubagentOutputFormat::Markdown);
+    assert_eq!(json, gogo_gadget::SubagentOutputFormat::Json);
+    assert_eq!(text, gogo_gadget::SubagentOutputFormat::Text);
+    assert_eq!(markdown, gogo_gadget::SubagentOutputFormat::Markdown);
     assert_ne!(json, text);
     assert_ne!(text, markdown);
 }
@@ -1275,19 +1275,19 @@ fn test_subagent_output_format_variants() {
 #[test]
 fn test_subagent_output_format_serialization() {
     for format in [
-        jarvis_v2::SubagentOutputFormat::Json,
-        jarvis_v2::SubagentOutputFormat::Text,
-        jarvis_v2::SubagentOutputFormat::Markdown,
+        gogo_gadget::SubagentOutputFormat::Json,
+        gogo_gadget::SubagentOutputFormat::Text,
+        gogo_gadget::SubagentOutputFormat::Markdown,
     ] {
         let json = serde_json::to_string(&format).unwrap();
-        let deserialized: jarvis_v2::SubagentOutputFormat = serde_json::from_str(&json).unwrap();
+        let deserialized: gogo_gadget::SubagentOutputFormat = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized, format);
     }
 }
 
 #[test]
 fn test_compressed_result_success() {
-    let result = jarvis_v2::CompressedResult {
+    let result = gogo_gadget::CompressedResult {
         success: true,
         commit_hash: Some("abc123def456".to_string()),
         files_changed: vec![
@@ -1299,7 +1299,7 @@ fn test_compressed_result_success() {
         iterations: 3,
         error: None,
         verified: true,
-        metadata: jarvis_v2::CompressedResultMetadata {
+        metadata: gogo_gadget::CompressedResultMetadata {
             version: "0.1.0".to_string(),
             depth: 0,
             parent_session_id: None,
@@ -1317,7 +1317,7 @@ fn test_compressed_result_success() {
 
 #[test]
 fn test_compressed_result_failure() {
-    let result = jarvis_v2::CompressedResult {
+    let result = gogo_gadget::CompressedResult {
         success: false,
         commit_hash: None,
         files_changed: vec![],
@@ -1326,7 +1326,7 @@ fn test_compressed_result_failure() {
         iterations: 5,
         error: Some("Build failed with 3 errors".to_string()),
         verified: false,
-        metadata: jarvis_v2::CompressedResultMetadata {
+        metadata: gogo_gadget::CompressedResultMetadata {
             version: "0.1.0".to_string(),
             depth: 1,
             parent_session_id: Some("parent-session".to_string()),
@@ -1344,7 +1344,7 @@ fn test_compressed_result_failure() {
 
 #[test]
 fn test_compressed_result_serialization() {
-    let result = jarvis_v2::CompressedResult {
+    let result = gogo_gadget::CompressedResult {
         success: true,
         commit_hash: Some("xyz789".to_string()),
         files_changed: vec![PathBuf::from("test.rs")],
@@ -1353,7 +1353,7 @@ fn test_compressed_result_serialization() {
         iterations: 1,
         error: None,
         verified: true,
-        metadata: jarvis_v2::CompressedResultMetadata {
+        metadata: gogo_gadget::CompressedResultMetadata {
             version: "0.1.0".to_string(),
             depth: 0,
             parent_session_id: None,
@@ -1366,7 +1366,7 @@ fn test_compressed_result_serialization() {
     assert!(json.contains("xyz789"));
     assert!(json.contains("test.rs"));
 
-    let deserialized: jarvis_v2::CompressedResult = serde_json::from_str(&json).unwrap();
+    let deserialized: gogo_gadget::CompressedResult = serde_json::from_str(&json).unwrap();
     assert_eq!(deserialized.success, result.success);
     assert_eq!(deserialized.commit_hash, result.commit_hash);
     assert_eq!(deserialized.summary, result.summary);
@@ -1374,7 +1374,7 @@ fn test_compressed_result_serialization() {
 
 #[test]
 fn test_compressed_result_metadata() {
-    let metadata = jarvis_v2::CompressedResultMetadata {
+    let metadata = gogo_gadget::CompressedResultMetadata {
         version: "1.2.3".to_string(),
         depth: 2,
         parent_session_id: Some("session-abc".to_string()),
@@ -1391,7 +1391,7 @@ fn test_compressed_result_metadata() {
 
 #[test]
 fn test_compressed_result_metadata_serialization() {
-    let metadata = jarvis_v2::CompressedResultMetadata {
+    let metadata = gogo_gadget::CompressedResultMetadata {
         version: "0.2.0".to_string(),
         depth: 1,
         parent_session_id: None,
@@ -1400,7 +1400,7 @@ fn test_compressed_result_metadata_serialization() {
     };
 
     let json = serde_json::to_string(&metadata).unwrap();
-    let deserialized: jarvis_v2::CompressedResultMetadata = serde_json::from_str(&json).unwrap();
+    let deserialized: gogo_gadget::CompressedResultMetadata = serde_json::from_str(&json).unwrap();
 
     assert_eq!(deserialized.version, metadata.version);
     assert_eq!(deserialized.depth, metadata.depth);
@@ -1409,29 +1409,29 @@ fn test_compressed_result_metadata_serialization() {
 
 #[test]
 fn test_subagent_registration_default() {
-    let reg = jarvis_v2::SubagentRegistration::default();
+    let reg = gogo_gadget::SubagentRegistration::default();
 
-    assert_eq!(reg.name, "jarvis-rs");
+    assert_eq!(reg.name, "gogo-gadget");
     assert!(reg.description.contains("Autonomous AI agent"));
-    assert_eq!(reg.command, "jarvis-rs --subagent-mode");
+    assert_eq!(reg.command, "gogo-gadget --subagent-mode");
     assert!(!reg.triggers.is_empty());
     assert!(!reg.capabilities.is_empty());
 }
 
 #[test]
 fn test_subagent_registration_triggers() {
-    let reg = jarvis_v2::SubagentRegistration::default();
+    let reg = gogo_gadget::SubagentRegistration::default();
 
     assert!(reg.triggers.contains(&"iterate until done".to_string()));
     assert!(reg.triggers.contains(&"run until complete".to_string()));
     assert!(reg.triggers.contains(&"verify completion".to_string()));
     assert!(reg.triggers.contains(&"autonomous task".to_string()));
-    assert!(reg.triggers.contains(&"jarvis".to_string()));
+    assert!(reg.triggers.contains(&"gogo-gadget".to_string()));
 }
 
 #[test]
 fn test_subagent_registration_capabilities() {
-    let reg = jarvis_v2::SubagentRegistration::default();
+    let reg = gogo_gadget::SubagentRegistration::default();
 
     assert!(reg.capabilities.contains(&"iterative_execution".to_string()));
     assert!(reg.capabilities.contains(&"verified_completion".to_string()));
@@ -1442,26 +1442,26 @@ fn test_subagent_registration_capabilities() {
 
 #[test]
 fn test_subagent_registration_serialization() {
-    let reg = jarvis_v2::SubagentRegistration::default();
+    let reg = gogo_gadget::SubagentRegistration::default();
 
     let json = serde_json::to_string(&reg).unwrap();
-    assert!(json.contains("jarvis-rs"));
+    assert!(json.contains("gogo-gadget"));
     assert!(json.contains("context_compression"));
 
-    let deserialized: jarvis_v2::SubagentRegistration = serde_json::from_str(&json).unwrap();
+    let deserialized: gogo_gadget::SubagentRegistration = serde_json::from_str(&json).unwrap();
     assert_eq!(deserialized.name, reg.name);
     assert_eq!(deserialized.triggers, reg.triggers);
 }
 
 #[test]
 fn test_subagent_registration_custom() {
-    let reg = jarvis_v2::SubagentRegistration {
+    let reg = gogo_gadget::SubagentRegistration {
         name: "custom-agent".to_string(),
         description: "A custom subagent".to_string(),
         command: "custom-agent --mode subagent".to_string(),
         triggers: vec!["custom trigger".to_string()],
         capabilities: vec!["custom capability".to_string()],
-        context_policy: jarvis_v2::ContextPolicy::default(),
+        context_policy: gogo_gadget::ContextPolicy::default(),
         version: "1.0.0".to_string(),
     };
 
@@ -1482,13 +1482,13 @@ fn test_subagent_config_depth_limits() {
     ];
 
     for (current, max, at_limit) in configs {
-        let config = jarvis_v2::SubagentConfig {
+        let config = gogo_gadget::SubagentConfig {
             task: "test".to_string(),
             parent_session_id: None,
             max_depth: max,
             current_depth: current,
-            context_policy: jarvis_v2::ContextPolicy::default(),
-            output_format: jarvis_v2::SubagentOutputFormat::default(),
+            context_policy: gogo_gadget::ContextPolicy::default(),
+            output_format: gogo_gadget::SubagentOutputFormat::default(),
         };
 
         assert_eq!(
@@ -1505,23 +1505,23 @@ fn test_subagent_config_depth_limits() {
 #[test]
 fn test_context_policy_max_summary_length_edge_cases() {
     // Test zero length
-    let policy_zero = jarvis_v2::ContextPolicy {
+    let policy_zero = gogo_gadget::ContextPolicy {
         max_summary_length: 0,
-        ..jarvis_v2::ContextPolicy::default()
+        ..gogo_gadget::ContextPolicy::default()
     };
     assert_eq!(policy_zero.max_summary_length, 0);
 
     // Test very large length
-    let policy_large = jarvis_v2::ContextPolicy {
+    let policy_large = gogo_gadget::ContextPolicy {
         max_summary_length: 1_000_000,
-        ..jarvis_v2::ContextPolicy::default()
+        ..gogo_gadget::ContextPolicy::default()
     };
     assert_eq!(policy_large.max_summary_length, 1_000_000);
 }
 
 #[test]
 fn test_compressed_result_empty_files() {
-    let result = jarvis_v2::CompressedResult {
+    let result = gogo_gadget::CompressedResult {
         success: true,
         commit_hash: None,
         files_changed: vec![],
@@ -1530,7 +1530,7 @@ fn test_compressed_result_empty_files() {
         iterations: 1,
         error: None,
         verified: true,
-        metadata: jarvis_v2::CompressedResultMetadata {
+        metadata: gogo_gadget::CompressedResultMetadata {
             version: "0.1.0".to_string(),
             depth: 0,
             parent_session_id: None,
@@ -1549,7 +1549,7 @@ fn test_compressed_result_many_files() {
         .map(|i| PathBuf::from(format!("src/file_{}.rs", i)))
         .collect();
 
-    let result = jarvis_v2::CompressedResult {
+    let result = gogo_gadget::CompressedResult {
         success: true,
         commit_hash: Some("abc123".to_string()),
         files_changed: files.clone(),
@@ -1558,7 +1558,7 @@ fn test_compressed_result_many_files() {
         iterations: 10,
         error: None,
         verified: true,
-        metadata: jarvis_v2::CompressedResultMetadata {
+        metadata: gogo_gadget::CompressedResultMetadata {
             version: "0.1.0".to_string(),
             depth: 0,
             parent_session_id: None,
@@ -1572,7 +1572,7 @@ fn test_compressed_result_many_files() {
 
 #[test]
 fn test_subagent_config_with_nested_context_policy() {
-    let custom_policy = jarvis_v2::ContextPolicy {
+    let custom_policy = gogo_gadget::ContextPolicy {
         hide_failures: false,
         hide_intermediates: false,
         include_commit: true,
@@ -1580,13 +1580,13 @@ fn test_subagent_config_with_nested_context_policy() {
         include_diffs: true,
     };
 
-    let config = jarvis_v2::SubagentConfig {
+    let config = gogo_gadget::SubagentConfig {
         task: "Complex task".to_string(),
         parent_session_id: Some("parent-123".to_string()),
         max_depth: 3,
         current_depth: 1,
         context_policy: custom_policy,
-        output_format: jarvis_v2::SubagentOutputFormat::Markdown,
+        output_format: gogo_gadget::SubagentOutputFormat::Markdown,
     };
 
     assert!(!config.context_policy.hide_failures);
@@ -1600,7 +1600,7 @@ fn test_subagent_config_with_nested_context_policy() {
 
 #[test]
 fn test_capability_type_variants() {
-    use jarvis_v2::extend::CapabilityType;
+    use gogo_gadget::extend::CapabilityType;
 
     let mcp = CapabilityType::Mcp;
     let skill = CapabilityType::Skill;
@@ -1615,7 +1615,7 @@ fn test_capability_type_variants() {
 
 #[test]
 fn test_capability_type_serialization() {
-    use jarvis_v2::extend::CapabilityType;
+    use gogo_gadget::extend::CapabilityType;
 
     for cap_type in [CapabilityType::Mcp, CapabilityType::Skill, CapabilityType::Agent] {
         let json = serde_json::to_string(&cap_type).unwrap();
@@ -1626,7 +1626,7 @@ fn test_capability_type_serialization() {
 
 #[test]
 fn test_capability_gap_mcp() {
-    use jarvis_v2::extend::CapabilityGap;
+    use gogo_gadget::extend::CapabilityGap;
 
     let gap = CapabilityGap::Mcp {
         name: "weather-api".to_string(),
@@ -1646,7 +1646,7 @@ fn test_capability_gap_mcp() {
 
 #[test]
 fn test_capability_gap_skill() {
-    use jarvis_v2::extend::CapabilityGap;
+    use gogo_gadget::extend::CapabilityGap;
 
     let gap = CapabilityGap::Skill {
         name: "code-review".to_string(),
@@ -1666,7 +1666,7 @@ fn test_capability_gap_skill() {
 
 #[test]
 fn test_capability_gap_agent() {
-    use jarvis_v2::extend::CapabilityGap;
+    use gogo_gadget::extend::CapabilityGap;
 
     let gap = CapabilityGap::Agent {
         name: "security-auditor".to_string(),
@@ -1684,7 +1684,7 @@ fn test_capability_gap_agent() {
 
 #[test]
 fn test_capability_gap_serialization() {
-    use jarvis_v2::extend::CapabilityGap;
+    use gogo_gadget::extend::CapabilityGap;
 
     let gaps = vec![
         CapabilityGap::Mcp {
@@ -1715,12 +1715,12 @@ fn test_capability_gap_serialization() {
 
 #[test]
 fn test_synthesized_capability_mcp() {
-    use jarvis_v2::extend::{SynthesizedCapability, CapabilityType};
+    use gogo_gadget::extend::{SynthesizedCapability, CapabilityType};
 
     let cap = SynthesizedCapability::new(
         CapabilityType::Mcp,
         "github-api",
-        PathBuf::from("/home/user/.jarvis/mcps/github-api"),
+        PathBuf::from("/home/user/.gogo-gadget/mcps/github-api"),
     );
 
     assert_eq!(cap.capability_type, CapabilityType::Mcp);
@@ -1732,12 +1732,12 @@ fn test_synthesized_capability_mcp() {
 
 #[test]
 fn test_synthesized_capability_skill() {
-    use jarvis_v2::extend::{SynthesizedCapability, CapabilityType};
+    use gogo_gadget::extend::{SynthesizedCapability, CapabilityType};
 
     let mut cap = SynthesizedCapability::new(
         CapabilityType::Skill,
         "docker-compose",
-        PathBuf::from("/home/user/.jarvis/skills/docker-compose.md"),
+        PathBuf::from("/home/user/.gogo-gadget/skills/docker-compose.md"),
     );
     cap.usage_count = 5;
     cap.success_rate = 0.8;
@@ -1754,7 +1754,7 @@ fn test_synthesized_capability_skill() {
 
 #[test]
 fn test_synthesized_capability_serialization() {
-    use jarvis_v2::extend::{SynthesizedCapability, CapabilityType};
+    use gogo_gadget::extend::{SynthesizedCapability, CapabilityType};
 
     let mut cap = SynthesizedCapability::new(
         CapabilityType::Agent,
@@ -1776,7 +1776,7 @@ fn test_synthesized_capability_serialization() {
 
 #[test]
 fn test_gap_detector_creation() {
-    use jarvis_v2::extend::GapDetector;
+    use gogo_gadget::extend::GapDetector;
 
     let detector = GapDetector::new();
     // Verify detector can be created
@@ -1785,7 +1785,7 @@ fn test_gap_detector_creation() {
 
 #[test]
 fn test_capability_registry_creation() {
-    use jarvis_v2::extend::CapabilityRegistry;
+    use gogo_gadget::extend::CapabilityRegistry;
 
     let registry = CapabilityRegistry::new_default();
     // Verify registry can be created
@@ -1794,7 +1794,7 @@ fn test_capability_registry_creation() {
 
 #[test]
 fn test_synthesis_engine_creation() {
-    use jarvis_v2::extend::SynthesisEngine;
+    use gogo_gadget::extend::SynthesisEngine;
 
     let engine = SynthesisEngine::default();
     // Verify engine can be created
@@ -1803,7 +1803,7 @@ fn test_synthesis_engine_creation() {
 
 #[test]
 fn test_capability_verifier_creation() {
-    use jarvis_v2::extend::CapabilityVerifier;
+    use gogo_gadget::extend::CapabilityVerifier;
 
     let verifier = CapabilityVerifier::new();
     // Verify verifier can be created
@@ -1812,7 +1812,7 @@ fn test_capability_verifier_creation() {
 
 #[test]
 fn test_hot_loader_creation() {
-    use jarvis_v2::extend::HotLoader;
+    use gogo_gadget::extend::HotLoader;
 
     let loader = HotLoader::new();
     // Verify loader can be created
@@ -1821,7 +1821,7 @@ fn test_hot_loader_creation() {
 
 #[test]
 fn test_verification_result_success() {
-    use jarvis_v2::extend::VerificationResult;
+    use gogo_gadget::extend::VerificationResult;
 
     let result = VerificationResult::success();
 
@@ -1832,7 +1832,7 @@ fn test_verification_result_success() {
 
 #[test]
 fn test_verification_result_failure() {
-    use jarvis_v2::extend::VerificationResult;
+    use gogo_gadget::extend::VerificationResult;
 
     let mut result = VerificationResult::failure("Failed to start MCP server");
     result.add_error("Port already in use");
@@ -1844,7 +1844,7 @@ fn test_verification_result_failure() {
 
 #[test]
 fn test_verification_result_serialization() {
-    use jarvis_v2::extend::VerificationResult;
+    use gogo_gadget::extend::VerificationResult;
 
     let mut result = VerificationResult::success();
     result.add_warning("Warning 1");

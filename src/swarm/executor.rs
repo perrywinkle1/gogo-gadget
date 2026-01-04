@@ -465,7 +465,7 @@ You MUST satisfy ALL before claiming completion:
         // NOTE: Agents report individual completion via JSON - orchestrator controls overall swarm completion
         prompt.push_str(
             "\n\n**Completion Instructions**:\n\
-             - Do NOT create .jarvis-satisfied or any signal files - the orchestrator handles swarm completion\n\
+             - Do NOT create .gogo-gadget-satisfied or any signal files - the orchestrator handles swarm completion\n\
              - Be thorough but focused on your specific area\n\
              - Document what you changed for coordination with other agents\n\
              - When you finish your part, include a JSON summary block:\n\
@@ -568,7 +568,7 @@ You MUST satisfy ALL before claiming completion:
         }
 
         // Agent success is determined by confidence score in their JSON output
-        // NOTE: Agents should NOT create .jarvis-satisfied - only the orchestrator decides overall completion
+        // NOTE: Agents should NOT create .gogo-gadget-satisfied - only the orchestrator decides overall completion
         // Use confidence to adjust success
         if confidence >= 0.8 {
             success = true;

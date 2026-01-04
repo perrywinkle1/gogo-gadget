@@ -122,8 +122,8 @@ pub struct HotLoader {
     agents_dir: PathBuf,
     /// Directory for MCP servers
     mcp_dir: PathBuf,
-    /// Jarvis capabilities directory
-    jarvis_capabilities_dir: PathBuf,
+    /// GoGoGadget capabilities directory
+    gadget_capabilities_dir: PathBuf,
 }
 
 impl Default for HotLoader {
@@ -141,7 +141,7 @@ impl HotLoader {
             skills_dir: home.join(".claude").join("skills"),
             agents_dir: home.join(".claude").join("agents"),
             mcp_dir: home.join(".claude").join("mcp-servers"),
-            jarvis_capabilities_dir: home.join(".jarvis").join("capabilities"),
+            gadget_capabilities_dir: home.join(".gogo-gadget").join("capabilities"),
         }
     }
 
@@ -157,7 +157,7 @@ impl HotLoader {
             skills_dir,
             agents_dir,
             mcp_dir: home.join(".claude").join("mcp-servers"),
-            jarvis_capabilities_dir: home.join(".jarvis").join("capabilities"),
+            gadget_capabilities_dir: home.join(".gogo-gadget").join("capabilities"),
         }
     }
 

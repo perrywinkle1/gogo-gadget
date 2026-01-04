@@ -424,7 +424,7 @@ impl Default for SwarmConfig {
 /// Configuration for subagent mode in swarm execution (Gas Town pattern)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SubagentModeConfig {
-    /// Whether agents should use subagent mode for spawning jarvis-rs
+    /// Whether agents should use subagent mode for spawning gogo-gadget
     pub enabled: bool,
 
     /// Maximum subagent recursion depth (safety limit)

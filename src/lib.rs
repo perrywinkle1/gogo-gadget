@@ -1,4 +1,4 @@
-//! Jarvis-RS Core Library
+//! GoGoGadget Core Library
 //!
 //! A Rust implementation of the Ralph-Wiggum iterative task execution pattern.
 //! This library provides:
@@ -850,7 +850,7 @@ impl ProgressCallback for JsonProgressReporter {
 // Gas Town Context Compression Types
 // ============================================================================
 
-/// Mode of operation for jarvis-rs
+/// Mode of operation for gogo-gadget
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum OperationMode {
     /// Standalone execution (normal CLI usage)
@@ -972,7 +972,7 @@ pub struct CompressedResult {
 /// Metadata for compressed results
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CompressedResultMetadata {
-    /// Jarvis-rs version
+    /// GoGoGadget version
     pub version: String,
 
     /// Subagent depth level
@@ -1016,18 +1016,18 @@ pub struct SubagentRegistration {
 impl Default for SubagentRegistration {
     fn default() -> Self {
         Self {
-            name: "jarvis-rs".to_string(),
+            name: "gogo-gadget".to_string(),
             description: "Autonomous AI agent with verified completion and context compression. \
                           Iterates until tasks are genuinely complete, then returns compressed results."
                 .to_string(),
-            command: "jarvis-rs --subagent-mode".to_string(),
+            command: "gogo-gadget --subagent-mode".to_string(),
             triggers: vec![
                 "iterate until done".to_string(),
                 "run until complete".to_string(),
                 "verify completion".to_string(),
                 "autonomous task".to_string(),
                 "ralph wiggum".to_string(),
-                "jarvis".to_string(),
+                "gogo-gadget".to_string(),
             ],
             capabilities: vec![
                 "iterative_execution".to_string(),

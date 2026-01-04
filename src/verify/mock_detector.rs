@@ -1,4 +1,4 @@
-//! Mock data and shortcut detection for Jarvis-RS
+//! Mock data and shortcut detection for GoGoGadget
 //!
 //! Detects common anti-patterns that indicate incomplete or lazy implementations:
 //! - TODO/FIXME comments left in production code

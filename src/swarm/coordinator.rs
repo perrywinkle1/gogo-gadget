@@ -7,7 +7,7 @@
 //!
 //! The swarm coordinator runs in a loop until the task is genuinely complete:
 //! 1. Decompose task and run parallel agents
-//! 2. Check for completion signals (.jarvis-satisfied, .jarvis-blocked)
+//! 2. Check for completion signals (.gogo-gadget-satisfied, .gogo-gadget-blocked)
 //! 3. If not satisfied, gather feedback and run another iteration
 //! 4. Continue until satisfied or blocked (no arbitrary iteration limit)
 //!
@@ -37,9 +37,9 @@ use std::sync::Arc;
 use std::time::Instant;
 use tracing::{debug, error, info, warn};
 
-const SATISFIED_FILE: &str = ".jarvis-satisfied";
-const BLOCKED_FILE: &str = ".jarvis-blocked";
-const CONTINUE_FILE: &str = ".jarvis-continue";
+const SATISFIED_FILE: &str = ".gogo-gadget-satisfied";
+const BLOCKED_FILE: &str = ".gogo-gadget-blocked";
+const CONTINUE_FILE: &str = ".gogo-gadget-continue";
 
 /// Maximum number of iteration feedbacks to keep (context pruning)
 const MAX_FEEDBACK_HISTORY: usize = 3;
@@ -614,7 +614,7 @@ impl SwarmCoordinator {
              2. Identify any conflicting changes\n\
              3. Merge the changes intelligently\n\
              4. Ensure the code compiles and makes sense\n\
-             5. Do NOT create any .jarvis-* signal files\n\
+             5. Do NOT create any .gogo-gadget-* signal files\n\
              6. Report success with: {{\"resolved\": true, \"summary\": \"...\"}}\n",
             conflict.file.display(),
             conflict.agent_ids
@@ -670,7 +670,7 @@ impl SwarmCoordinator {
              2. Run any tests if applicable\n\
              3. Verify the code compiles (if code was written)\n\
              4. Check for any obvious issues or bugs\n\
-             5. Do NOT create any .jarvis-* signal files\n\n\
+             5. Do NOT create any .gogo-gadget-* signal files\n\n\
              Respond with a JSON block:\n\
              ```json\n\
              {{\n\

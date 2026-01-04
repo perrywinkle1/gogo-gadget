@@ -1,27 +1,27 @@
 #!/bin/bash
 #
-# jarvis - Bash wrapper for jarvis-rs
+# gogo-gadget - Bash wrapper for gogo-gadget
 #
 # Usage:
-#   jarvis "your task description"
-#   jarvis "task" --max-iterations 20 --promise "DONE"
-#   jarvis "task" --output-format json --quiet
-#   jarvis "task" --checkpoint ./state.json
-#   jarvis status                    # Show current task status
-#   jarvis resume [checkpoint]       # Resume from checkpoint
-#   jarvis history                   # Show execution history
-#   jarvis completions <shell>       # Generate shell completions
-#   jarvis --install                 # Install to /usr/local/bin
-#   jarvis --help
+#   gogo-gadget "your task description"
+#   gogo-gadget "task" --max-iterations 20 --promise "DONE"
+#   gogo-gadget "task" --output-format json --quiet
+#   gogo-gadget "task" --checkpoint ./state.json
+#   gogo-gadget status                    # Show current task status
+#   gogo-gadget resume [checkpoint]       # Resume from checkpoint
+#   gogo-gadget history                   # Show execution history
+#   gogo-gadget completions <shell>       # Generate shell completions
+#   gogo-gadget --install                 # Install to /usr/local/bin
+#   gogo-gadget --help
 #
 # Environment variables:
-#   JARVIS_MODEL       - Model to use (e.g., claude-opus-4-5-20251101)
-#   JARVIS_MAX_ITER    - Default max iterations (default: 10)
-#   JARVIS_VERBOSE     - Enable verbose logging (set to 1)
-#   JARVIS_QUIET       - Enable quiet mode (set to 1)
-#   JARVIS_OUTPUT_FMT  - Output format (text, json, markdown)
-#   JARVIS_NO_COLOR    - Disable colored output (set to 1)
-#   JARVIS_HOME        - Jarvis data directory (default: ~/.jarvis)
+#   GADGET_MODEL       - Model to use (e.g., claude-opus-4-5-20251101)
+#   GADGET_MAX_ITER    - Default max iterations (default: 10)
+#   GADGET_VERBOSE     - Enable verbose logging (set to 1)
+#   GADGET_QUIET       - Enable quiet mode (set to 1)
+#   GADGET_OUTPUT_FMT  - Output format (text, json, markdown)
+#   GADGET_NO_COLOR    - Disable colored output (set to 1)
+#   GADGET_HOME        - GoGoGadget data directory (default: ~/.gogo-gadget)
 #
 
 set -euo pipefail
@@ -47,8 +47,8 @@ handle_error() {
     echo -e "${RED:-}Error occurred at line $line_number (exit code: $exit_code)${NC:-}" >&2
 
     # Cleanup working file if it exists
-    if [[ -f "$(pwd)/.jarvis-working" ]]; then
-        rm -f "$(pwd)/.jarvis-working" 2>/dev/null || true
+    if [[ -f "$(pwd)/.gogo-gadget-working" ]]; then
+        rm -f "$(pwd)/.gogo-gadget-working" 2>/dev/null || true
     fi
 
     exit "$exit_code"
@@ -59,8 +59,8 @@ handle_interrupt() {
     echo -e "${YELLOW:-}Interrupted by user${NC:-}" >&2
 
     # Cleanup working file
-    if [[ -f "$(pwd)/.jarvis-working" ]]; then
-        rm -f "$(pwd)/.jarvis-working" 2>/dev/null || true
+    if [[ -f "$(pwd)/.gogo-gadget-working" ]]; then
+        rm -f "$(pwd)/.gogo-gadget-working" 2>/dev/null || true
     fi
 
     exit 130
@@ -91,16 +91,16 @@ if [[ ! -d "$PROJECT_ROOT" ]]; then
 fi
 
 # Configuration with validation
-JARVIS_HOME="${JARVIS_HOME:-$HOME/.jarvis}"
-HISTORY_FILE="$JARVIS_HOME/history.jsonl"
-CHECKPOINT_DIR="$JARVIS_HOME/checkpoints"
-FIRST_RUN_FILE="$JARVIS_HOME/.first_run_complete"
+GADGET_HOME="${GADGET_HOME:-$HOME/.gogo-gadget}"
+HISTORY_FILE="$GADGET_HOME/history.jsonl"
+CHECKPOINT_DIR="$GADGET_HOME/checkpoints"
+FIRST_RUN_FILE="$GADGET_HOME/.first_run_complete"
 
 # Binary location
-BINARY="$PROJECT_ROOT/target/release/jarvis-rs"
+BINARY="$PROJECT_ROOT/target/release/gogo-gadget"
 
 # Colors for output (with fallback for non-color terminals)
-if [[ "${JARVIS_NO_COLOR:-0}" == "1" ]] || [[ ! -t 1 ]]; then
+if [[ "${GADGET_NO_COLOR:-0}" == "1" ]] || [[ ! -t 1 ]]; then
     RED=''
     GREEN=''
     YELLOW=''
@@ -136,9 +136,9 @@ print_info() {
     echo -e "${BLUE}ℹ️  $1${NC}"
 }
 
-ensure_jarvis_home() {
-    if ! mkdir -p "$JARVIS_HOME" 2>/dev/null; then
-        print_error "Cannot create JARVIS_HOME directory: $JARVIS_HOME"
+ensure_gadget_home() {
+    if ! mkdir -p "$GADGET_HOME" 2>/dev/null; then
+        print_error "Cannot create GADGET_HOME directory: $GADGET_HOME"
         return 1
     fi
     if ! mkdir -p "$CHECKPOINT_DIR" 2>/dev/null; then
@@ -241,47 +241,47 @@ validate_file_path() {
 validate_environment_variables() {
     local has_errors=0
 
-    # Validate JARVIS_MAX_ITER if set
-    if [[ -n "${JARVIS_MAX_ITER:-}" ]]; then
-        if ! validate_positive_integer "$JARVIS_MAX_ITER" "JARVIS_MAX_ITER"; then
+    # Validate GADGET_MAX_ITER if set
+    if [[ -n "${GADGET_MAX_ITER:-}" ]]; then
+        if ! validate_positive_integer "$GADGET_MAX_ITER" "GADGET_MAX_ITER"; then
             has_errors=1
         fi
     fi
 
-    # Validate JARVIS_OUTPUT_FMT if set
-    if [[ -n "${JARVIS_OUTPUT_FMT:-}" ]]; then
-        if ! validate_output_format "$JARVIS_OUTPUT_FMT"; then
+    # Validate GADGET_OUTPUT_FMT if set
+    if [[ -n "${GADGET_OUTPUT_FMT:-}" ]]; then
+        if ! validate_output_format "$GADGET_OUTPUT_FMT"; then
             has_errors=1
         fi
     fi
 
-    # Validate JARVIS_MODEL if set
-    if [[ -n "${JARVIS_MODEL:-}" ]]; then
-        if ! validate_model "$JARVIS_MODEL"; then
+    # Validate GADGET_MODEL if set
+    if [[ -n "${GADGET_MODEL:-}" ]]; then
+        if ! validate_model "$GADGET_MODEL"; then
             has_errors=1
         fi
     fi
 
-    # Validate JARVIS_HOME if custom
-    if [[ "${JARVIS_HOME:-}" != "$HOME/.jarvis" ]] && [[ -n "${JARVIS_HOME:-}" ]]; then
-        local parent_dir="$(dirname "$JARVIS_HOME")"
+    # Validate GADGET_HOME if custom
+    if [[ "${GADGET_HOME:-}" != "$HOME/.gogo-gadget" ]] && [[ -n "${GADGET_HOME:-}" ]]; then
+        local parent_dir="$(dirname "$GADGET_HOME")"
         if [[ ! -d "$parent_dir" ]]; then
-            print_error "JARVIS_HOME parent directory does not exist: $parent_dir"
+            print_error "GADGET_HOME parent directory does not exist: $parent_dir"
             has_errors=1
         fi
     fi
 
     # Validate boolean environment variables
-    for var in JARVIS_VERBOSE JARVIS_QUIET JARVIS_NO_COLOR; do
+    for var in GADGET_VERBOSE GADGET_QUIET GADGET_NO_COLOR; do
         local value="${!var:-}"
         if [[ -n "$value" ]] && [[ "$value" != "0" ]] && [[ "$value" != "1" ]]; then
             print_warning "$var should be 0 or 1, got: $value (treating as enabled)"
         fi
     done
 
-    # Validate JARVIS_TIMEOUT if set
-    if [[ -n "${JARVIS_TIMEOUT:-}" ]]; then
-        if ! validate_positive_integer "$JARVIS_TIMEOUT" "JARVIS_TIMEOUT"; then
+    # Validate GADGET_TIMEOUT if set
+    if [[ -n "${GADGET_TIMEOUT:-}" ]]; then
+        if ! validate_positive_integer "$GADGET_TIMEOUT" "GADGET_TIMEOUT"; then
             has_errors=1
         fi
     fi
@@ -300,7 +300,7 @@ check_dependencies() {
 
     # Cargo is needed for building
     if [[ ! -x "$BINARY" ]] && ! command -v cargo &> /dev/null; then
-        missing_deps+=("cargo (for building jarvis-rs)")
+        missing_deps+=("cargo (for building gogo-gadget)")
     fi
 
     if [[ ${#missing_deps[@]} -gt 0 ]]; then
@@ -319,25 +319,25 @@ check_dependencies() {
 # ============================================================================
 
 check_first_run() {
-    ensure_jarvis_home
+    ensure_gadget_home
 
     if [[ ! -f "$FIRST_RUN_FILE" ]]; then
         echo ""
         echo -e "${CYAN}╔═══════════════════════════════════════════════════════════════╗${NC}"
-        echo -e "${CYAN}║           Welcome to Jarvis-RS! 🤖                            ║${NC}"
+        echo -e "${CYAN}║           Welcome to GoGoGadget! 🤖                            ║${NC}"
         echo -e "${CYAN}╚═══════════════════════════════════════════════════════════════╝${NC}"
         echo ""
 
         # Check if script is in PATH
-        if ! command -v jarvis &> /dev/null; then
-            print_warning "jarvis is not in your PATH"
+        if ! command -v gogo-gadget &> /dev/null; then
+            print_warning "gogo-gadget is not in your PATH"
             echo ""
-            echo "To add jarvis to your PATH, you can either:"
+            echo "To add gogo-gadget to your PATH, you can either:"
             echo ""
             echo "  1. Add the scripts directory to your PATH:"
             echo -e "     ${CYAN}export PATH=\"\$PATH:$SCRIPT_DIR\"${NC}"
             echo ""
-            echo "  2. Or install jarvis system-wide:"
+            echo "  2. Or install gogo-gadget system-wide:"
             echo -e "     ${CYAN}$0 --install${NC}"
             echo ""
             echo "  3. Or add to your shell profile (~/.bashrc or ~/.zshrc):"
@@ -349,7 +349,7 @@ check_first_run() {
         if ! command -v claude &> /dev/null; then
             print_warning "claude CLI not found"
             echo ""
-            echo "Jarvis requires the Claude CLI to be installed."
+            echo "GoGoGadget requires the Claude CLI to be installed."
             echo "Visit: https://docs.anthropic.com/en/docs/claude-cli"
             echo ""
         fi
@@ -368,15 +368,15 @@ cmd_status() {
 
     echo ""
     echo -e "${CYAN}═══════════════════════════════════════════════════════════════${NC}"
-    echo -e "${CYAN}  Jarvis Status${NC}"
+    echo -e "${CYAN}  GoGoGadget Status${NC}"
     echo -e "${CYAN}═══════════════════════════════════════════════════════════════${NC}"
     echo ""
 
     # Check for active signal files
-    local satisfied_file="$working_dir/.jarvis-satisfied"
-    local continue_file="$working_dir/.jarvis-continue"
-    local blocked_file="$working_dir/.jarvis-blocked"
-    local working_file="$working_dir/.jarvis-working"
+    local satisfied_file="$working_dir/.gogo-gadget-satisfied"
+    local continue_file="$working_dir/.gogo-gadget-continue"
+    local blocked_file="$working_dir/.gogo-gadget-blocked"
+    local working_file="$working_dir/.gogo-gadget-working"
 
     if [[ -f "$satisfied_file" ]]; then
         print_success "Task completed!"
@@ -409,14 +409,14 @@ cmd_status() {
 
     # Check for checkpoints
     local checkpoint_count=0
-    if [[ -d "$working_dir/.jarvis-checkpoints" ]]; then
-        checkpoint_count=$(find "$working_dir/.jarvis-checkpoints" -name "*.json" 2>/dev/null | wc -l | tr -d ' ')
+    if [[ -d "$working_dir/.gogo-gadget-checkpoints" ]]; then
+        checkpoint_count=$(find "$working_dir/.gogo-gadget-checkpoints" -name "*.json" 2>/dev/null | wc -l | tr -d ' ')
     fi
 
     if [[ "$checkpoint_count" -gt 0 ]]; then
         echo ""
         echo "Checkpoints available: $checkpoint_count"
-        echo "Use 'jarvis resume' to continue from a checkpoint"
+        echo "Use 'gogo-gadget resume' to continue from a checkpoint"
     fi
 
     # Show recent history
@@ -425,7 +425,7 @@ cmd_status() {
         if [[ "$history_count" -gt 0 ]]; then
             echo ""
             echo "Total executions in history: $history_count"
-            echo "Use 'jarvis history' for details"
+            echo "Use 'gogo-gadget history' for details"
         fi
     fi
 
@@ -446,12 +446,12 @@ cmd_resume() {
     echo -e "${CYAN}═══════════════════════════════════════════════════════════════${NC}"
     echo ""
 
-    local checkpoint_dir="$working_dir/.jarvis-checkpoints"
+    local checkpoint_dir="$working_dir/.gogo-gadget-checkpoints"
 
     if [[ ! -d "$checkpoint_dir" ]]; then
         print_error "No checkpoints found in current directory"
         echo ""
-        echo "Checkpoints are stored in .jarvis-checkpoints/"
+        echo "Checkpoints are stored in .gogo-gadget-checkpoints/"
         echo "Run a task first to create checkpoints."
         return 1
     fi
@@ -560,7 +560,7 @@ record_history() {
     local success="$2"
     local iterations="$3"
 
-    ensure_jarvis_home
+    ensure_gadget_home
 
     local timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
     local entry=$(jq -n \
@@ -583,10 +583,10 @@ cmd_completions() {
     case "$shell" in
         bash)
             cat << 'EOF'
-# Jarvis bash completion
-# Add to ~/.bashrc: eval "$(jarvis completions bash)"
+# GoGoGadget bash completion
+# Add to ~/.bashrc: eval "$(gogo-gadget completions bash)"
 
-_jarvis_completions() {
+_gogo_gadget_completions() {
     local cur="${COMP_WORDS[COMP_CWORD]}"
     local prev="${COMP_WORDS[COMP_CWORD-1]}"
 
@@ -597,13 +597,13 @@ _jarvis_completions() {
     local options="--max-iterations --promise --dir --model --verbose --quiet --dry-run --output-format --checkpoint --no-color"
 
     case "$prev" in
-        jarvis)
+        gogo-gadget)
             COMPREPLY=($(compgen -W "$commands $options" -- "$cur"))
             ;;
         resume)
             # Complete checkpoint files
-            if [[ -d ".jarvis-checkpoints" ]]; then
-                local checkpoints=$(ls .jarvis-checkpoints/*.json 2>/dev/null | xargs -I{} basename {})
+            if [[ -d ".gogo-gadget-checkpoints" ]]; then
+                local checkpoints=$(ls .gogo-gadget-checkpoints/*.json 2>/dev/null | xargs -I{} basename {})
                 COMPREPLY=($(compgen -W "$checkpoints latest" -- "$cur"))
             fi
             ;;
@@ -633,16 +633,16 @@ _jarvis_completions() {
     esac
 }
 
-complete -F _jarvis_completions jarvis
+complete -F _gogo_gadget_completions gogo-gadget
 EOF
             ;;
         zsh)
             cat << 'EOF'
-#compdef jarvis
-# Jarvis zsh completion
-# Add to ~/.zshrc: eval "$(jarvis completions zsh)"
+#compdef gogo-gadget
+# GoGoGadget zsh completion
+# Add to ~/.zshrc: eval "$(gogo-gadget completions zsh)"
 
-_jarvis() {
+_gogo_gadget() {
     local -a commands options
 
     commands=(
@@ -674,14 +674,14 @@ _jarvis() {
 
     case "$state" in
         command)
-            _describe -t commands 'jarvis commands' commands
-            _describe -t options 'jarvis options' options
+            _describe -t commands 'gogo-gadget commands' commands
+            _describe -t options 'gogo-gadget options' options
             ;;
         args)
             case "${words[1]}" in
                 resume)
-                    if [[ -d ".jarvis-checkpoints" ]]; then
-                        local checkpoints=(${(f)"$(ls .jarvis-checkpoints/*.json 2>/dev/null | xargs -I{} basename {})"})
+                    if [[ -d ".gogo-gadget-checkpoints" ]]; then
+                        local checkpoints=(${(f)"$(ls .gogo-gadget-checkpoints/*.json 2>/dev/null | xargs -I{} basename {})"})
                         _describe -t checkpoints 'checkpoints' checkpoints
                     fi
                     ;;
@@ -693,41 +693,41 @@ _jarvis() {
     esac
 }
 
-compdef _jarvis jarvis
+compdef _gogo_gadget gogo-gadget
 EOF
             ;;
         fish)
             cat << 'EOF'
-# Jarvis fish completion
-# Save to ~/.config/fish/completions/jarvis.fish
+# GoGoGadget fish completion
+# Save to ~/.config/fish/completions/gogo-gadget.fish
 
 # Commands
-complete -c jarvis -n "__fish_use_subcommand" -a "status" -d "Show current task status"
-complete -c jarvis -n "__fish_use_subcommand" -a "resume" -d "Resume from checkpoint"
-complete -c jarvis -n "__fish_use_subcommand" -a "history" -d "Show execution history"
-complete -c jarvis -n "__fish_use_subcommand" -a "completions" -d "Generate shell completions"
+complete -c gogo-gadget -n "__fish_use_subcommand" -a "status" -d "Show current task status"
+complete -c gogo-gadget -n "__fish_use_subcommand" -a "resume" -d "Resume from checkpoint"
+complete -c gogo-gadget -n "__fish_use_subcommand" -a "history" -d "Show execution history"
+complete -c gogo-gadget -n "__fish_use_subcommand" -a "completions" -d "Generate shell completions"
 
 # Options
-complete -c jarvis -l max-iterations -s i -d "Maximum iterations" -x -a "5 10 15 20 30"
-complete -c jarvis -l promise -s p -d "Completion promise string" -x
-complete -c jarvis -l dir -s d -d "Working directory" -x -a "(__fish_complete_directories)"
-complete -c jarvis -l model -s m -d "Claude model" -x -a "claude-opus-4-5-20251101 claude-sonnet-4-20250514"
-complete -c jarvis -l verbose -s v -d "Enable verbose output"
-complete -c jarvis -l quiet -s q -d "Suppress non-essential output"
-complete -c jarvis -l dry-run -d "Analyze without executing"
-complete -c jarvis -l output-format -s o -d "Output format" -x -a "text json markdown"
-complete -c jarvis -l checkpoint -s c -d "Checkpoint file" -r
-complete -c jarvis -l no-color -d "Disable colored output"
-complete -c jarvis -l install -d "Install to /usr/local/bin"
-complete -c jarvis -l help -d "Show help"
-complete -c jarvis -l version -d "Show version"
+complete -c gogo-gadget -l max-iterations -s i -d "Maximum iterations" -x -a "5 10 15 20 30"
+complete -c gogo-gadget -l promise -s p -d "Completion promise string" -x
+complete -c gogo-gadget -l dir -s d -d "Working directory" -x -a "(__fish_complete_directories)"
+complete -c gogo-gadget -l model -s m -d "Claude model" -x -a "claude-opus-4-5-20251101 claude-sonnet-4-20250514"
+complete -c gogo-gadget -l verbose -s v -d "Enable verbose output"
+complete -c gogo-gadget -l quiet -s q -d "Suppress non-essential output"
+complete -c gogo-gadget -l dry-run -d "Analyze without executing"
+complete -c gogo-gadget -l output-format -s o -d "Output format" -x -a "text json markdown"
+complete -c gogo-gadget -l checkpoint -s c -d "Checkpoint file" -r
+complete -c gogo-gadget -l no-color -d "Disable colored output"
+complete -c gogo-gadget -l install -d "Install to /usr/local/bin"
+complete -c gogo-gadget -l help -d "Show help"
+complete -c gogo-gadget -l version -d "Show version"
 
 # Resume subcommand completions
-complete -c jarvis -n "__fish_seen_subcommand_from resume" -a "latest" -d "Latest checkpoint"
-complete -c jarvis -n "__fish_seen_subcommand_from resume" -a "(ls .jarvis-checkpoints/*.json 2>/dev/null | xargs -I{} basename {})"
+complete -c gogo-gadget -n "__fish_seen_subcommand_from resume" -a "latest" -d "Latest checkpoint"
+complete -c gogo-gadget -n "__fish_seen_subcommand_from resume" -a "(ls .gogo-gadget-checkpoints/*.json 2>/dev/null | xargs -I{} basename {})"
 
 # Completions subcommand
-complete -c jarvis -n "__fish_seen_subcommand_from completions" -a "bash zsh fish"
+complete -c gogo-gadget -n "__fish_seen_subcommand_from completions" -a "bash zsh fish"
 EOF
             ;;
         *)
@@ -744,11 +744,11 @@ EOF
 
 cmd_install() {
     local install_dir="${1:-/usr/local/bin}"
-    local target="$install_dir/jarvis"
+    local target="$install_dir/gogo-gadget"
 
     echo ""
     echo -e "${CYAN}═══════════════════════════════════════════════════════════════${NC}"
-    echo -e "${CYAN}  Install Jarvis${NC}"
+    echo -e "${CYAN}  Install GoGoGadget${NC}"
     echo -e "${CYAN}═══════════════════════════════════════════════════════════════${NC}"
     echo ""
 
@@ -766,7 +766,7 @@ cmd_install() {
 
     # Build the release binary first
     if [[ ! -x "$BINARY" ]]; then
-        print_info "Building jarvis-rs..."
+        print_info "Building gogo-gadget..."
         cd "$PROJECT_ROOT"
         if ! cargo build --release; then
             print_error "Build failed"
@@ -776,7 +776,7 @@ cmd_install() {
     fi
 
     # Create symlink to this script
-    local script_path="$SCRIPT_DIR/jarvis"
+    local script_path="$SCRIPT_DIR/gogo-gadget"
 
     if [[ -L "$target" ]]; then
         print_info "Removing existing symlink..."
@@ -795,16 +795,16 @@ cmd_install() {
     print_info "Creating symlink: $target -> $script_path"
     $use_sudo ln -s "$script_path" "$target"
 
-    print_success "Jarvis installed successfully!"
+    print_success "GoGoGadget installed successfully!"
     echo ""
-    echo "You can now run 'jarvis' from anywhere."
+    echo "You can now run 'gogo-gadget' from anywhere."
     echo ""
 
     # Verify installation
-    if command -v jarvis &> /dev/null; then
-        print_success "Verified: jarvis is in PATH"
+    if command -v gogo-gadget &> /dev/null; then
+        print_success "Verified: gogo-gadget is in PATH"
     else
-        print_warning "jarvis may not be in PATH yet"
+        print_warning "gogo-gadget may not be in PATH yet"
         echo "You may need to restart your terminal or run:"
         echo "  export PATH=\"\$PATH:$install_dir\""
     fi
@@ -816,11 +816,11 @@ cmd_install() {
 
 cmd_version() {
     if [[ -x "$BINARY" ]]; then
-        "$BINARY" --version 2>/dev/null || echo "jarvis-rs (version unknown)"
+        "$BINARY" --version 2>/dev/null || echo "gogo-gadget (version unknown)"
     else
-        echo "jarvis-rs (not built)"
+        echo "gogo-gadget (not built)"
         echo ""
-        echo "Run 'jarvis build' or execute any command to trigger build."
+        echo "Run 'gogo-gadget build' or execute any command to trigger build."
     fi
 }
 
@@ -830,17 +830,17 @@ cmd_version() {
 
 cmd_help() {
     cat << 'EOF'
-Jarvis-RS: Autonomous AI Agent with Verified Completion
+GoGoGadget: Autonomous AI Agent with Verified Completion
 
 USAGE:
-    jarvis <TASK>                   Execute a task
-    jarvis status                   Show current task status
-    jarvis resume [CHECKPOINT]      Resume from checkpoint (default: latest)
-    jarvis history [LIMIT]          Show execution history (default: 10)
-    jarvis completions <SHELL>      Generate shell completions (bash/zsh/fish)
-    jarvis --install [DIR]          Install to directory (default: /usr/local/bin)
-    jarvis --help                   Show this help
-    jarvis --version                Show version
+    gogo-gadget <TASK>                   Execute a task
+    gogo-gadget status                   Show current task status
+    gogo-gadget resume [CHECKPOINT]      Resume from checkpoint (default: latest)
+    gogo-gadget history [LIMIT]          Show execution history (default: 10)
+    gogo-gadget completions <SHELL>      Generate shell completions (bash/zsh/fish)
+    gogo-gadget --install [DIR]          Install to directory (default: /usr/local/bin)
+    gogo-gadget --help                   Show this help
+    gogo-gadget --version                Show version
 
 OPTIONS:
     -i, --max-iterations <N>    Maximum iterations before giving up (default: 10)
@@ -855,32 +855,32 @@ OPTIONS:
         --no-color              Disable colored output
 
 ENVIRONMENT VARIABLES:
-    JARVIS_MODEL      Default model to use
-    JARVIS_MAX_ITER   Default max iterations
-    JARVIS_TIMEOUT    Timeout in seconds for task execution
-    JARVIS_VERBOSE    Enable verbose mode (set to 1)
-    JARVIS_QUIET      Enable quiet mode (set to 1)
-    JARVIS_OUTPUT_FMT Output format (text, json, markdown)
-    JARVIS_NO_COLOR   Disable colored output (set to 1)
-    JARVIS_HOME       Data directory (default: ~/.jarvis)
+    GADGET_MODEL      Default model to use
+    GADGET_MAX_ITER   Default max iterations
+    GADGET_TIMEOUT    Timeout in seconds for task execution
+    GADGET_VERBOSE    Enable verbose mode (set to 1)
+    GADGET_QUIET      Enable quiet mode (set to 1)
+    GADGET_OUTPUT_FMT Output format (text, json, markdown)
+    GADGET_NO_COLOR   Disable colored output (set to 1)
+    GADGET_HOME       Data directory (default: ~/.gogo-gadget)
 
 EXAMPLES:
-    jarvis "Fix the typo in README.md"
-    jarvis "Build a REST API with authentication" --max-iterations 20
-    jarvis "Refactor the database layer" --promise "REFACTORING_COMPLETE"
-    jarvis "Run tests" --output-format json --quiet
-    jarvis "Long task" --checkpoint ./task_state.json
-    jarvis status
-    jarvis resume
-    jarvis history 20
+    gogo-gadget "Fix the typo in README.md"
+    gogo-gadget "Build a REST API with authentication" --max-iterations 20
+    gogo-gadget "Refactor the database layer" --promise "REFACTORING_COMPLETE"
+    gogo-gadget "Run tests" --output-format json --quiet
+    gogo-gadget "Long task" --checkpoint ./task_state.json
+    gogo-gadget status
+    gogo-gadget resume
+    gogo-gadget history 20
 
 SIGNAL FILES:
-    Jarvis uses signal files to communicate task status:
-    - .jarvis-satisfied   Created when task is complete
-    - .jarvis-continue    Created when more work is needed
-    - .jarvis-blocked     Created when task cannot proceed
+    GoGoGadget uses signal files to communicate task status:
+    - .gogo-gadget-satisfied   Created when task is complete
+    - .gogo-gadget-continue    Created when more work is needed
+    - .gogo-gadget-blocked     Created when task cannot proceed
 
-For more information, visit: https://github.com/your-repo/jarvis-rs
+For more information, visit: https://github.com/your-repo/gogo-gadget
 EOF
 }
 
@@ -936,7 +936,7 @@ main() {
     if ! validate_environment_variables; then
         print_error "Invalid environment variable configuration"
         echo ""
-        echo "Run 'jarvis --help' to see valid environment variables." >&2
+        echo "Run 'gogo-gadget --help' to see valid environment variables." >&2
         exit 1
     fi
 
@@ -950,7 +950,7 @@ main() {
 
     # Check if binary exists, build if not
     if [[ ! -x "$BINARY" ]]; then
-        echo "🔨 Building jarvis-rs..."
+        echo "🔨 Building gogo-gadget..."
 
         # Check for cargo
         if ! command -v cargo &> /dev/null; then
@@ -977,32 +977,32 @@ main() {
     ARGS=()
 
     # Add default max iterations from env (already validated)
-    if [[ -n "${JARVIS_MAX_ITER:-}" ]]; then
-        ARGS+=("--max-iterations" "$JARVIS_MAX_ITER")
+    if [[ -n "${GADGET_MAX_ITER:-}" ]]; then
+        ARGS+=("--max-iterations" "$GADGET_MAX_ITER")
     fi
 
     # Add model from env (already validated)
-    if [[ -n "${JARVIS_MODEL:-}" ]]; then
-        ARGS+=("--model" "$JARVIS_MODEL")
+    if [[ -n "${GADGET_MODEL:-}" ]]; then
+        ARGS+=("--model" "$GADGET_MODEL")
     fi
 
     # Add verbose flag from env
-    if [[ "${JARVIS_VERBOSE:-0}" != "0" ]]; then
+    if [[ "${GADGET_VERBOSE:-0}" != "0" ]]; then
         ARGS+=("--verbose")
     fi
 
     # Add quiet flag from env
-    if [[ "${JARVIS_QUIET:-0}" != "0" ]]; then
+    if [[ "${GADGET_QUIET:-0}" != "0" ]]; then
         ARGS+=("--quiet")
     fi
 
     # Add output format from env (already validated)
-    if [[ -n "${JARVIS_OUTPUT_FMT:-}" ]]; then
-        ARGS+=("--output-format" "$JARVIS_OUTPUT_FMT")
+    if [[ -n "${GADGET_OUTPUT_FMT:-}" ]]; then
+        ARGS+=("--output-format" "$GADGET_OUTPUT_FMT")
     fi
 
     # Add no-color flag from env
-    if [[ "${JARVIS_NO_COLOR:-0}" != "0" ]]; then
+    if [[ "${GADGET_NO_COLOR:-0}" != "0" ]]; then
         ARGS+=("--no-color")
     fi
 
@@ -1015,8 +1015,8 @@ main() {
     if [[ -z "$task" ]]; then
         print_error "Task description is required"
         echo ""
-        echo "Usage: jarvis \"your task description\"" >&2
-        echo "Run 'jarvis --help' for more information." >&2
+        echo "Usage: gogo-gadget \"your task description\"" >&2
+        echo "Run 'gogo-gadget --help' for more information." >&2
         exit 1
     fi
 
@@ -1029,17 +1029,17 @@ main() {
     # Check working directory is writable (for signal files)
     if [[ ! -w "$working_dir" ]]; then
         print_warning "Working directory is not writable: $working_dir"
-        print_warning "Signal files (.jarvis-*) cannot be created"
+        print_warning "Signal files (.gogo-gadget-*) cannot be created"
     fi
 
     # Create working file to indicate task is running
     if [[ -w "$working_dir" ]]; then
-        echo "$task" > "$working_dir/.jarvis-working" 2>/dev/null || true
+        echo "$task" > "$working_dir/.gogo-gadget-working" 2>/dev/null || true
     fi
 
     # Cleanup function
     cleanup() {
-        rm -f "$working_dir/.jarvis-working" 2>/dev/null || true
+        rm -f "$working_dir/.gogo-gadget-working" 2>/dev/null || true
     }
     trap cleanup EXIT
 
@@ -1047,22 +1047,22 @@ main() {
     local exit_code=0
     local timeout_cmd=""
 
-    # Apply timeout if JARVIS_TIMEOUT is set
-    if [[ -n "${JARVIS_TIMEOUT:-}" ]]; then
+    # Apply timeout if GADGET_TIMEOUT is set
+    if [[ -n "${GADGET_TIMEOUT:-}" ]]; then
         if command -v timeout &> /dev/null; then
-            timeout_cmd="timeout ${JARVIS_TIMEOUT}s"
+            timeout_cmd="timeout ${GADGET_TIMEOUT}s"
         elif command -v gtimeout &> /dev/null; then
             # macOS with coreutils
-            timeout_cmd="gtimeout ${JARVIS_TIMEOUT}s"
+            timeout_cmd="gtimeout ${GADGET_TIMEOUT}s"
         else
-            print_warning "JARVIS_TIMEOUT set but 'timeout' command not available"
+            print_warning "GADGET_TIMEOUT set but 'timeout' command not available"
         fi
     fi
 
     if [[ -n "$timeout_cmd" ]]; then
         $timeout_cmd "$BINARY" "${ARGS[@]}" "$@" || exit_code=$?
         if [[ $exit_code -eq 124 ]]; then
-            print_error "Task timed out after ${JARVIS_TIMEOUT} seconds"
+            print_error "Task timed out after ${GADGET_TIMEOUT} seconds"
         fi
     else
         "$BINARY" "${ARGS[@]}" "$@" || exit_code=$?

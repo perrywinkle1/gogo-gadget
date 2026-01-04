@@ -86,7 +86,7 @@ For `--rlm-mode continuous`:
 
 Enable tracing:
 ```bash
-RUST_LOG=jarvis_v2::rlm=debug jarvis-v2 --rlm ...
+RUST_LOG=gogo_gadget::rlm=debug gogo-gadget --rlm ...
 ```
 
 Key log points:

@@ -1,6 +1,6 @@
 //! Self-Extending Capability Module
 //!
-//! This module enables jarvis-v2 to:
+//! This module enables gogo-gadget to:
 //! 1. Recognize when it would benefit from a new capability (MCP, SKILL.md, AGENT.md)
 //! 2. Synthesize that capability
 //! 3. Configure/register it

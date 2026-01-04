@@ -1,7 +1,7 @@
 //! Subagent Module - Gas Town Context Compression
 //!
 //! This module implements the "Gas Town" pattern for context compression
-//! at subagent boundaries. When jarvis-rs runs as a Claude Code subagent,
+//! at subagent boundaries. When gogo-gadget runs as a Claude Code subagent,
 //! it compresses successful results to hide iteration details from the parent.
 //!
 //! ## Self-Extension Support
@@ -563,7 +563,7 @@ pub enum RegistrationScope {
     Project(PathBuf),
 }
 
-/// Register jarvis-rs as a Claude Code subagent
+/// Register gogo-gadget as a Claude Code subagent
 pub fn register_subagent(scope: RegistrationScope) -> Result<()> {
     let registration = SubagentRegistration::default();
 
@@ -611,8 +611,8 @@ fn update_settings_file(path: &Path, registration: &SubagentRegistration) -> Res
         ClaudeSettings::default()
     };
 
-    // Remove existing jarvis-rs registration if present
-    settings.subagents.retain(|s| s.name != "jarvis-rs");
+    // Remove existing gogo-gadget registration if present
+    settings.subagents.retain(|s| s.name != "gogo-gadget");
 
     // Add new registration
     settings.subagents.push(registration.clone());
@@ -627,13 +627,13 @@ fn update_settings_file(path: &Path, registration: &SubagentRegistration) -> Res
     fs::write(path, content)?;
 
     info!(
-        "Registered jarvis-rs as Claude Code subagent at {:?}",
+        "Registered gogo-gadget as Claude Code subagent at {:?}",
         path
     );
     Ok(())
 }
 
-/// Unregister jarvis-rs from Claude Code
+/// Unregister gogo-gadget from Claude Code
 pub fn unregister_subagent(scope: RegistrationScope) -> Result<()> {
     let path = match scope {
         RegistrationScope::Global => {
@@ -650,16 +650,16 @@ pub fn unregister_subagent(scope: RegistrationScope) -> Result<()> {
     let content = fs::read_to_string(&path)?;
     let mut settings: ClaudeSettings = serde_json::from_str(&content).unwrap_or_default();
 
-    settings.subagents.retain(|s| s.name != "jarvis-rs");
+    settings.subagents.retain(|s| s.name != "gogo-gadget");
 
     let content = serde_json::to_string_pretty(&settings)?;
     fs::write(&path, content)?;
 
-    info!("Unregistered jarvis-rs from {:?}", path);
+    info!("Unregistered gogo-gadget from {:?}", path);
     Ok(())
 }
 
-/// Spawn a child jarvis-rs subagent (for true recursion)
+/// Spawn a child gogo-gadget subagent (for true recursion)
 pub async fn spawn_subagent(
     task: &str,
     working_dir: &Path,
@@ -687,7 +687,7 @@ pub async fn spawn_subagent(
     let config_json = serde_json::to_string(&child_config)?;
 
     // Build command
-    let mut cmd = Command::new("jarvis-rs");
+    let mut cmd = Command::new("gogo-gadget");
     cmd.arg("--subagent-mode");
     cmd.arg("--subagent-config");
     cmd.arg(&config_json);
@@ -722,8 +722,8 @@ mod tests {
     #[test]
     fn test_subagent_registration_default() {
         let reg = SubagentRegistration::default();
-        assert_eq!(reg.name, "jarvis-rs");
-        assert!(reg.triggers.contains(&"jarvis".to_string()));
+        assert_eq!(reg.name, "gogo-gadget");
+        assert!(reg.triggers.contains(&"gogo-gadget".to_string()));
         assert!(reg.capabilities.contains(&"context_compression".to_string()));
     }
 
