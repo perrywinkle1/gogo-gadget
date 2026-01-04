@@ -290,30 +290,30 @@ impl HotLoader {
 
     /// Register a skill capability
     ///
-    /// Skills are simple markdown files that Claude Code picks up automatically.
+    /// Skills are markdown files that Claude Code picks up automatically.
+    /// Claude Code expects: ~/.claude/skills/{name}/SKILL.md
     /// No restart required.
     pub fn register_skill(&self, capability: &SynthesizedCapability) -> Result<LoadResult> {
         info!("Registering skill: {}", capability.name);
 
-        // Skills can be loaded without restart
-        fs::create_dir_all(&self.skills_dir).context("Failed to create skills directory")?;
+        // Claude Code expects skills in subdirectory structure: skills/{name}/SKILL.md
+        let skill_name = capability.name.trim_end_matches(".SKILL.md");
+        let skill_dir = self.skills_dir.join(skill_name);
+        fs::create_dir_all(&skill_dir).context("Failed to create skill directory")?;
 
-        // Determine destination filename
-        let filename = if capability.name.ends_with(".SKILL.md") {
-            capability.name.clone()
-        } else {
-            format!("{}.SKILL.md", capability.name)
-        };
-        let dest = self.skills_dir.join(&filename);
+        let dest = skill_dir.join("SKILL.md");
 
         // Copy the skill file
         if capability.path.is_file() {
             fs::copy(&capability.path, &dest).context("Failed to copy skill file")?;
         } else if capability.path.is_dir() {
             // If it's a directory, look for the skill file inside
-            let skill_file = capability.path.join(format!("{}.SKILL.md", capability.name));
+            let skill_file = capability.path.join(format!("{}.SKILL.md", skill_name));
+            let alt_skill_file = capability.path.join("SKILL.md");
             if skill_file.exists() {
                 fs::copy(&skill_file, &dest)?;
+            } else if alt_skill_file.exists() {
+                fs::copy(&alt_skill_file, &dest)?;
             } else {
                 return Err(anyhow::anyhow!(
                     "Could not find skill file in directory {:?}",
@@ -331,36 +331,36 @@ impl HotLoader {
 
         Ok(LoadResult::success(format!(
             "Skill '{}' registered and active at {:?}",
-            capability.name, dest
+            skill_name, skill_dir
         ))
-        .with_path(dest))
+        .with_path(skill_dir))
     }
 
     /// Register an agent capability
     ///
     /// Agents are markdown files similar to skills.
+    /// Claude Code expects: ~/.claude/agents/{name}/AGENT.md
     /// No restart required.
     pub fn register_agent(&self, capability: &SynthesizedCapability) -> Result<LoadResult> {
         info!("Registering agent: {}", capability.name);
 
-        // Agents can be loaded without restart
-        fs::create_dir_all(&self.agents_dir).context("Failed to create agents directory")?;
+        // Claude Code expects agents in subdirectory structure: agents/{name}/AGENT.md
+        let agent_name = capability.name.trim_end_matches(".AGENT.md");
+        let agent_dir = self.agents_dir.join(agent_name);
+        fs::create_dir_all(&agent_dir).context("Failed to create agent directory")?;
 
-        // Determine destination filename
-        let filename = if capability.name.ends_with(".AGENT.md") {
-            capability.name.clone()
-        } else {
-            format!("{}.AGENT.md", capability.name)
-        };
-        let dest = self.agents_dir.join(&filename);
+        let dest = agent_dir.join("AGENT.md");
 
         // Copy the agent file
         if capability.path.is_file() {
             fs::copy(&capability.path, &dest).context("Failed to copy agent file")?;
         } else if capability.path.is_dir() {
-            let agent_file = capability.path.join(format!("{}.AGENT.md", capability.name));
+            let agent_file = capability.path.join(format!("{}.AGENT.md", agent_name));
+            let alt_agent_file = capability.path.join("AGENT.md");
             if agent_file.exists() {
                 fs::copy(&agent_file, &dest)?;
+            } else if alt_agent_file.exists() {
+                fs::copy(&alt_agent_file, &dest)?;
             } else {
                 return Err(anyhow::anyhow!(
                     "Could not find agent file in directory {:?}",
@@ -378,9 +378,9 @@ impl HotLoader {
 
         Ok(LoadResult::success(format!(
             "Agent '{}' registered and active at {:?}",
-            capability.name, dest
+            agent_name, agent_dir
         ))
-        .with_path(dest))
+        .with_path(agent_dir))
     }
 
     /// Register any capability based on its type
@@ -431,42 +431,50 @@ impl HotLoader {
 
     /// Unregister a skill capability
     pub fn unregister_skill(&self, name: &str) -> Result<LoadResult> {
-        let filename = if name.ends_with(".SKILL.md") {
-            name.to_string()
-        } else {
-            format!("{}.SKILL.md", name)
-        };
-        let path = self.skills_dir.join(&filename);
+        let skill_name = name.trim_end_matches(".SKILL.md");
 
-        if path.exists() {
-            fs::remove_file(&path)?;
-            Ok(LoadResult::success(format!("Skill '{}' unregistered", name)))
-        } else {
-            Ok(LoadResult::failure(format!(
-                "Skill '{}' not found at {:?}",
-                name, path
-            )))
+        // Try subdirectory structure first (Claude Code standard)
+        let dir_path = self.skills_dir.join(skill_name);
+        if dir_path.is_dir() {
+            fs::remove_dir_all(&dir_path)?;
+            return Ok(LoadResult::success(format!("Skill '{}' unregistered", skill_name)));
         }
+
+        // Fallback to legacy flat file structure
+        let file_path = self.skills_dir.join(format!("{}.SKILL.md", skill_name));
+        if file_path.exists() {
+            fs::remove_file(&file_path)?;
+            return Ok(LoadResult::success(format!("Skill '{}' unregistered", skill_name)));
+        }
+
+        Ok(LoadResult::failure(format!(
+            "Skill '{}' not found",
+            skill_name
+        )))
     }
 
     /// Unregister an agent capability
     pub fn unregister_agent(&self, name: &str) -> Result<LoadResult> {
-        let filename = if name.ends_with(".AGENT.md") {
-            name.to_string()
-        } else {
-            format!("{}.AGENT.md", name)
-        };
-        let path = self.agents_dir.join(&filename);
+        let agent_name = name.trim_end_matches(".AGENT.md");
 
-        if path.exists() {
-            fs::remove_file(&path)?;
-            Ok(LoadResult::success(format!("Agent '{}' unregistered", name)))
-        } else {
-            Ok(LoadResult::failure(format!(
-                "Agent '{}' not found at {:?}",
-                name, path
-            )))
+        // Try subdirectory structure first (Claude Code standard)
+        let dir_path = self.agents_dir.join(agent_name);
+        if dir_path.is_dir() {
+            fs::remove_dir_all(&dir_path)?;
+            return Ok(LoadResult::success(format!("Agent '{}' unregistered", agent_name)));
         }
+
+        // Fallback to legacy flat file structure
+        let file_path = self.agents_dir.join(format!("{}.AGENT.md", agent_name));
+        if file_path.exists() {
+            fs::remove_file(&file_path)?;
+            return Ok(LoadResult::success(format!("Agent '{}' unregistered", agent_name)));
+        }
+
+        Ok(LoadResult::failure(format!(
+            "Agent '{}' not found",
+            agent_name
+        )))
     }
 
     /// List all installed skills
@@ -479,6 +487,16 @@ impl HotLoader {
         for entry in fs::read_dir(&self.skills_dir)? {
             let entry = entry?;
             let path = entry.path();
+            // Claude Code uses subdirectory structure: skills/{name}/SKILL.md
+            if path.is_dir() {
+                let skill_file = path.join("SKILL.md");
+                if skill_file.exists() {
+                    if let Some(name) = path.file_name() {
+                        skills.push(name.to_string_lossy().to_string());
+                    }
+                }
+            }
+            // Also support legacy flat file structure
             if path.is_file() {
                 if let Some(name) = path.file_name() {
                     let name = name.to_string_lossy();
@@ -501,6 +519,16 @@ impl HotLoader {
         for entry in fs::read_dir(&self.agents_dir)? {
             let entry = entry?;
             let path = entry.path();
+            // Claude Code uses subdirectory structure: agents/{name}/AGENT.md
+            if path.is_dir() {
+                let agent_file = path.join("AGENT.md");
+                if agent_file.exists() {
+                    if let Some(name) = path.file_name() {
+                        agents.push(name.to_string_lossy().to_string());
+                    }
+                }
+            }
+            // Also support legacy flat file structure
             if path.is_file() {
                 if let Some(name) = path.file_name() {
                     let name = name.to_string_lossy();
@@ -677,8 +705,8 @@ mod tests {
         assert!(result.success);
         assert!(!result.restart_required);
 
-        // Verify the skill was copied
-        let installed_skill = skills_dir.join("test-skill.SKILL.md");
+        // Verify the skill was copied (subdirectory structure)
+        let installed_skill = skills_dir.join("test-skill").join("SKILL.md");
         assert!(installed_skill.exists());
         let installed_content = fs::read_to_string(&installed_skill).unwrap();
         assert_eq!(installed_content, skill_content);
@@ -712,8 +740,8 @@ mod tests {
         assert!(result.success);
         assert!(!result.restart_required);
 
-        // Verify the agent was copied
-        let installed_agent = agents_dir.join("test-agent.AGENT.md");
+        // Verify the agent was copied (subdirectory structure)
+        let installed_agent = agents_dir.join("test-agent").join("AGENT.md");
         assert!(installed_agent.exists());
     }
 
@@ -723,9 +751,11 @@ mod tests {
         let skills_dir = temp_dir.path().join("skills");
         fs::create_dir_all(&skills_dir).unwrap();
 
-        // Create some skill files
-        fs::write(skills_dir.join("skill1.SKILL.md"), "# Skill 1").unwrap();
-        fs::write(skills_dir.join("skill2.SKILL.md"), "# Skill 2").unwrap();
+        // Create skills with subdirectory structure
+        fs::create_dir_all(skills_dir.join("skill1")).unwrap();
+        fs::write(skills_dir.join("skill1").join("SKILL.md"), "# Skill 1").unwrap();
+        fs::create_dir_all(skills_dir.join("skill2")).unwrap();
+        fs::write(skills_dir.join("skill2").join("SKILL.md"), "# Skill 2").unwrap();
 
         let loader = HotLoader::with_paths(
             temp_dir.path().join("settings.json"),
@@ -745,10 +775,12 @@ mod tests {
         let skills_dir = temp_dir.path().join("skills");
         fs::create_dir_all(&skills_dir).unwrap();
 
-        // Create a skill file
-        let skill_path = skills_dir.join("test-skill.SKILL.md");
-        fs::write(&skill_path, "# Test Skill").unwrap();
-        assert!(skill_path.exists());
+        // Create a skill with subdirectory structure
+        let skill_dir = skills_dir.join("test-skill");
+        fs::create_dir_all(&skill_dir).unwrap();
+        let skill_file = skill_dir.join("SKILL.md");
+        fs::write(&skill_file, "# Test Skill").unwrap();
+        assert!(skill_file.exists());
 
         let loader = HotLoader::with_paths(
             temp_dir.path().join("settings.json"),
@@ -758,7 +790,7 @@ mod tests {
 
         let result = loader.unregister_skill("test-skill").unwrap();
         assert!(result.success);
-        assert!(!skill_path.exists());
+        assert!(!skill_dir.exists());
     }
 
     #[test]

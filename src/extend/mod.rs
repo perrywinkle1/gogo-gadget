@@ -11,6 +11,7 @@ use std::path::PathBuf;
 
 pub mod gap;
 pub mod loader;
+pub mod overseer;
 pub mod registry;
 pub mod synthesis;
 pub mod verify;
@@ -34,6 +35,11 @@ pub use synthesis::{
 // Re-export main types from verify module
 pub use verify::{
     quick, CapabilityVerifier, VerificationConfig, VerificationResult, VerificationStep,
+};
+
+// Re-export main types from overseer module
+pub use overseer::{
+    BrainstormResult, CapabilityIdea, CreativeOverseer, EffortLevel, OverseerConfig,
 };
 
 /// Type of capability that can be synthesized

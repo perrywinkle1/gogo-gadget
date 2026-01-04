@@ -99,8 +99,8 @@ until verified complete. Agents run until done - no iteration limits. \
 Uses Claude as the underlying LLM with built-in verification."
 )]
 struct Args {
-    /// The task to execute (required unless resuming from checkpoint or using registration/capability/rlm commands)
-    #[arg(required_unless_present_any = ["checkpoint", "register_subagent", "unregister_subagent", "list_capabilities", "prune_capabilities", "rlm"])]
+    /// The task to execute (required unless resuming from checkpoint or using registration/capability/rlm/overseer commands)
+    #[arg(required_unless_present_any = ["checkpoint", "register_subagent", "unregister_subagent", "list_capabilities", "prune_capabilities", "rlm", "overseer_only"])]
     task: Option<String>,
 
     /// Working directory for task execution
@@ -227,6 +227,14 @@ struct Args {
     /// are encountered. Use this flag to disable this behavior.
     #[arg(long)]
     no_overseer: bool,
+
+    /// Run Creative Overseer standalone (capability synthesis only)
+    ///
+    /// Runs the Creative Overseer in a loop to continuously brainstorm and
+    /// synthesize new capabilities (Skills, MCPs, Agents) WITHOUT executing
+    /// any tasks or modifying source code. Use this to build up capabilities.
+    #[arg(long)]
+    overseer_only: bool,
 
     /// Model to use for Creative Overseer brainstorming
     ///
@@ -623,6 +631,11 @@ async fn main() -> Result<()> {
         return run_rlm(&args, working_dir, shutdown_signal);
     }
 
+    // Handle overseer-only mode (standalone capability synthesis)
+    if args.overseer_only {
+        return run_overseer_only(&args, working_dir, shutdown_signal).await;
+    }
+
     // Handle subagent mode
     if args.subagent_mode {
         let task = args
@@ -851,16 +864,9 @@ async fn main() -> Result<()> {
             let mut coordinator = SwarmCoordinator::from_config(&config, agent_count)
                 .with_shutdown_signal(shutdown_signal.clone());
 
-            if !args.no_overseer && self_extend_enabled {
-                use jarvis_v2::extend::OverseerConfig;
-                let overseer_config = OverseerConfig {
-                    enabled: true,
-                    brainstorm_model: args.overseer_model.clone(),
-                    working_dir: config.working_dir.clone(),
-                    ..OverseerConfig::default()
-                };
-                coordinator = coordinator.with_overseer_config(overseer_config);
-            }
+            // TODO: Integrate overseer into swarm coordinator
+            // For now, use --overseer-only mode for standalone capability synthesis
+            let _ = (&args.no_overseer, &args.overseer_model); // suppress unused warnings
 
             let swarm_result = coordinator.execute(&task).await?;
 
@@ -894,4 +900,172 @@ async fn main() -> Result<()> {
     } else {
         std::process::exit(1);
     }
+}
+
+/// Run the Creative Overseer in standalone mode for capability synthesis
+async fn run_overseer_only(
+    args: &Args,
+    working_dir: PathBuf,
+    shutdown_signal: ShutdownSignal,
+) -> Result<()> {
+    use jarvis_v2::extend::{CapabilityRegistry, CapabilityType, CreativeOverseer, HotLoader, OverseerConfig, SynthesizedCapability};
+    use std::sync::{Arc, Mutex};
+    use std::time::Duration;
+
+    println!("{}", "Creative Overseer - Standalone Mode".bright_cyan().bold());
+    println!("{}", "═".repeat(36).cyan());
+    println!();
+    println!("Continuously brainstorming and synthesizing capabilities...");
+    println!("  Skills  → ~/.claude/skills/");
+    println!("  MCPs    → ~/.claude/settings.json (mcpServers)");
+    println!("  Agents  → ~/.claude/agents/");
+    println!("  Hooks   → ~/.claude/settings.json (hooks)");
+    println!("Press Ctrl+C to stop.\n");
+
+    let registry = Arc::new(Mutex::new(CapabilityRegistry::load().unwrap_or_default()));
+    let hot_loader = HotLoader::new(); // Registers capabilities into Claude Code
+
+    let overseer_config = OverseerConfig {
+        enabled: true,
+        brainstorm_model: args.overseer_model.clone(),
+        working_dir: working_dir.clone(),
+        max_ideas_per_iteration: 5,
+        min_confidence_to_synthesize: 0.6,
+        immediate_synthesis: true,
+    };
+
+    let mut overseer = CreativeOverseer::new(overseer_config, registry.clone());
+
+    // Get existing capabilities for context
+    let existing_caps: Vec<String> = {
+        let reg = registry.lock().unwrap();
+        reg.mcps.iter().map(|c| format!("MCP: {}", c.name))
+            .chain(reg.skills.iter().map(|c| format!("Skill: {}", c.name)))
+            .chain(reg.agents.iter().map(|c| format!("Agent: {}", c.name)))
+            .collect()
+    };
+
+    let mut iteration = 0;
+    let mut total_synthesized = 0;
+
+    while !shutdown_signal.is_shutdown() {
+        iteration += 1;
+        println!("{}  Iteration {} - Brainstorming...", "🧠".bright_yellow(), iteration);
+
+        // Build a context-aware brainstorming task
+        let task = format!(
+            "Analyze this Rust/software project and suggest NEW capabilities. \
+             Focus on tools, integrations, and workflows that would be genuinely useful. \
+             Consider: testing, debugging, deployment, monitoring, documentation, code quality. \
+             This is iteration {} - try to suggest different things than before.",
+            iteration
+        );
+
+        // Run brainstorming
+        match overseer.brainstorm(&task, &[], &existing_caps).await {
+            Ok(result) => {
+                if result.ideas.is_empty() {
+                    println!("   No new capability ideas this iteration.");
+                } else {
+                    let mut installed_count = 0;
+                    for idea in &result.ideas {
+                        let mut status = match idea.synthesis_success {
+                            Some(true) => "✅ synthesized".green(),
+                            Some(false) => "❌ failed".red(),
+                            None => "⏳ pending".yellow(),
+                        };
+
+                        // If synthesized, install into Claude Code
+                        if idea.synthesis_success == Some(true) {
+                            let synth_dir = working_dir.join(".jarvis").join("synthesized");
+                            let cap_path = match idea.capability_type {
+                                CapabilityType::Skill => synth_dir.join("skills").join(format!("{}.SKILL.md", idea.name)),
+                                CapabilityType::Mcp => synth_dir.join("mcps").join(&idea.name),
+                                CapabilityType::Agent => synth_dir.join("agents").join(format!("{}.AGENT.md", idea.name)),
+                            };
+
+                            if cap_path.exists() {
+                                let capability = SynthesizedCapability::new(
+                                    idea.capability_type.clone(),
+                                    idea.name.clone(),
+                                    cap_path.clone(),
+                                );
+
+                                match hot_loader.register(&capability) {
+                                    Ok(load_result) => {
+                                        status = format!("✅ installed → {}",
+                                            load_result.installed_path.as_ref()
+                                                .map(|p| p.display().to_string())
+                                                .unwrap_or_else(|| "~/.claude/".to_string())
+                                        ).green();
+                                        installed_count += 1;
+                                    }
+                                    Err(e) => {
+                                        status = format!("⚠️ install failed: {}", e).yellow();
+                                    }
+                                }
+                            } else {
+                                status = format!("⚠️ file not found: {}", cap_path.display()).yellow();
+                            }
+                        } else if idea.synthesis_success == Some(false) {
+                            // Already marked as failed
+                        } else {
+                            status = format!("⏳ synthesis_success={:?}", idea.synthesis_success).dimmed();
+                        }
+
+                        println!(
+                            "   {:?}: {} - {} [confidence: {:.0}%] {}",
+                            idea.capability_type,
+                            idea.name.bright_white(),
+                            idea.description.dimmed(),
+                            idea.confidence * 100.0,
+                            status
+                        );
+                    }
+                    total_synthesized += result.synthesized_count;
+                    if installed_count > 0 {
+                        println!("   {} {} capabilities installed into Claude Code", "→".green(), installed_count);
+                    }
+                }
+                println!(
+                    "   Duration: {}ms | Synthesized: {} | Total: {}\n",
+                    result.duration_ms, result.synthesized_count, total_synthesized
+                );
+            }
+            Err(e) => {
+                eprintln!("   Error during brainstorming: {}", e);
+            }
+        }
+
+        // Wait before next iteration (give time for Claude rate limits)
+        println!("   Waiting 30s before next iteration...");
+        for _ in 0..30 {
+            if shutdown_signal.is_shutdown() {
+                println!("\nShutdown signal received, stopping...");
+                break;
+            }
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
+    }
+
+    // Summary
+    println!("\n{}", "═".repeat(40).cyan());
+    println!("{}  Session complete!", "✨".bright_green());
+    println!("   Iterations: {}", iteration);
+    println!("   Capabilities synthesized: {}", total_synthesized);
+
+    // Show what was created
+    let synth_dir = working_dir.join(".jarvis").join("synthesized");
+    if synth_dir.exists() {
+        println!("\n   Created files:");
+        for entry in walkdir::WalkDir::new(&synth_dir)
+            .into_iter()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().extension().map(|x| x == "md").unwrap_or(false))
+        {
+            println!("   - {}", entry.path().strip_prefix(&working_dir).unwrap_or(entry.path()).display());
+        }
+    }
+
+    Ok(())
 }
