@@ -860,15 +860,30 @@ async fn main() -> Result<()> {
                 }
             }
 
-            // Configure overseer if not disabled
-            let mut coordinator = SwarmCoordinator::from_config(&config, agent_count)
+            // Configure swarm coordinator
+            let coordinator = SwarmCoordinator::from_config(&config, agent_count)
                 .with_shutdown_signal(shutdown_signal.clone());
 
-            // TODO: Integrate overseer into swarm coordinator
-            // For now, use --overseer-only mode for standalone capability synthesis
-            let _ = (&args.no_overseer, &args.overseer_model); // suppress unused warnings
+            // Execute with or without Creative Overseer
+            let swarm_result = if args.no_overseer {
+                // Standard swarm execution without overseer
+                coordinator.execute(&task).await?
+            } else {
+                // Run with Creative Overseer observing and proactively creating capabilities
+                use jarvis_v2::extend::CapabilityRegistry;
+                use std::sync::{Arc, Mutex};
 
-            let swarm_result = coordinator.execute(&task).await?;
+                let registry_path = working_dir.join(".jarvis").join("capabilities.json");
+                let registry = Arc::new(Mutex::new(CapabilityRegistry::new(&registry_path)));
+
+                println!(
+                    "{}",
+                    "🎨 Creative Overseer enabled - observing swarm for capability opportunities"
+                        .cyan()
+                );
+
+                coordinator.execute_with_overseer(&task, registry).await?
+            };
 
             // Convert SwarmResult to TaskResult
             jarvis_v2::TaskResult::from(swarm_result)
