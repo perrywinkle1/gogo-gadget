@@ -3,5 +3,8 @@ Cargo.lock
 *.swp
 *.swo
 .DS_Store
-.jarvis-*
+.gogo-gadget-*
+.gogo-gadget/
+.jarvis/
+.swarm-notification
 *.log

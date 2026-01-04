@@ -56,5 +56,5 @@ src/rlm/
 - NOT for greenfield projects (nothing to explore)
 
 ## Additional Docs
-- `agent_docs/rlm_architecture.md` - Detailed component design
-- `agent_docs/rlm_tuning.md` - Performance optimization
+- `docs/agents/rlm-architecture.md` - Detailed component design
+- `docs/agents/rlm-tuning.md` - Performance optimization
