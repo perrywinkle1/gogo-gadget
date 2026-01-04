@@ -1,6 +1,6 @@
 # GoGoGadget
 
-Autonomous AI agent framework that executes tasks to genuine completion using outcome-focused iteration, parallel swarm execution, and self-extending capabilities. Built in Rust with Tokio async runtime, uses Claude CLI (OAuth, no API keys).
+Autonomous AI agent framework that executes tasks to genuine completion using outcome-focused iteration, parallel worker execution (CLI flag: `--swarm`), and self-extending capabilities. Built in Rust with Tokio async runtime, uses Claude CLI (OAuth, no API keys).
 
 ## Core Execution Loop
 
@@ -24,7 +24,7 @@ Set via `--evidence-level`:
 4. If incomplete, feedback is added to next iteration prompt
 5. Repeat until satisfied or blocked
 
-## Swarm Mode
+## Worker Mode (CLI: --swarm)
 
 Enabled with `--swarm N` where N is the number of parallel agents.
 
@@ -43,7 +43,7 @@ After all agents complete, results are merged:
 - Verification runs on aggregated changes
 
 ### Continuous Mode
-With `--continuous`, swarm ignores satisfaction signals and only stops on blocked. Useful for ongoing maintenance tasks.
+With `--continuous`, worker mode ignores satisfaction signals and only stops on blocked. Useful for ongoing maintenance tasks.
 
 ## Self-Extend System
 
@@ -73,7 +73,7 @@ Tracks all capabilities in `.gogo-gadget/capabilities.json`:
 
 ## Creative Overseer
 
-The "Chief of Product" pattern. Runs alongside swarm to proactively create capabilities before gaps are encountered.
+The "Chief of Product" pattern. Runs alongside worker mode to proactively create capabilities before gaps are encountered.
 
 ### How It Works
 1. Observes task decomposition and agent assignments
@@ -82,8 +82,8 @@ The "Chief of Product" pattern. Runs alongside swarm to proactively create capab
 4. Suggests new capabilities to agents via shared context
 
 ### Activation
-- `--overseer-only` - Run overseer without swarm (standalone ideation)
-- Automatically active in swarm mode when self-extend is enabled
+- `--overseer-only` - Run overseer without worker mode (standalone ideation)
+- Automatically active in worker mode when self-extend is enabled
 
 ### Configuration (in OverseerConfig)
 - `min_confidence_to_synthesize`: 0.7 (default)
@@ -143,7 +143,7 @@ Recursive Language Model for processing codebases that exceed context limits. En
 ### Execution Mode
 | Flag | Description |
 |------|-------------|
-| `--swarm <N>` | Run N parallel agents |
+| `--swarm <N>` | Run N parallel agents (worker mode) |
 | `--rlm` | Enable RLM mode for large codebases |
 | `--continuous` | Run until blocked (ignore satisfaction) |
 | `--subagent` | Run as a child process of another agent |
@@ -177,7 +177,7 @@ src/
 ├── main.rs              # CLI entry point, argument parsing
 ├── task_loop.rs         # Core execution loop, signal file handling
 ├── swarm/
-│   ├── mod.rs           # Swarm types and re-exports
+│   ├── mod.rs           # Worker types and re-exports (implementation)
 │   ├── coordinator.rs   # Parallel agent orchestration, drift detection
 │   ├── decomposer.rs    # Task decomposition into subtasks
 │   └── aggregator.rs    # Result merging and conflict resolution
@@ -210,10 +210,10 @@ src/
 ### Start Here
 1. `src/main.rs` - Understand CLI flags and how modes are selected
 2. `src/task_loop.rs` - The core execution loop (signal files, iteration, evolved prompts)
-3. `src/swarm/coordinator.rs` - How parallel agents are orchestrated
+3. `src/swarm/coordinator.rs` - How parallel agents are orchestrated (worker mode)
 
 ### Deep Dives
-- **Swarm internals**: `docs/specs/core.md`, then `src/swarm/decomposer.rs`
+- **Worker internals**: `docs/specs/core.md`, then `src/swarm/decomposer.rs`
 - **Self-extend system**: `docs/specs/self-extend.md`, then `src/extend/gap.rs` → `synthesis.rs` → `loader.rs`
 - **RLM architecture**: `docs/agents/rlm-architecture.md`, then `src/rlm/executor.rs`
 - **Verification logic**: `src/verify/mod.rs` and `src/verify/mock_detector.rs`
@@ -230,10 +230,10 @@ docs/
 ├── architecture/
 │   └── flowchart.md      # Visual system flow
 └── bugs/
-    └── swarm-verification.md
+    └── workers-verification.md
 ```
 
 ## Commands
 - Build: `cargo build --release`
 - Test: `cargo test`
-- Run: `gogo-gadget "<task>"` or `gogo-gadget --swarm 3 "<task>"`
+- Run: `gogo-gadget "<task>"` or `gogo-gadget --swarm 3 "<task>"` (worker mode)

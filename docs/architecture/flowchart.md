@@ -3,7 +3,7 @@
 These flowcharts are derived from the current code paths in `src/` and are meant to be read top-down.
 Each chart includes a short explanation so the intent is clear without cross-referencing code.
 
-## 1) System Overview (Single vs Swarm)
+## 1) System Overview (Single vs Workers)
 
 Explains how the CLI selects an execution mode, runs the loop, and verifies completion.
 
@@ -21,22 +21,22 @@ flowchart TB
         Signals[.gogo-gadget-* signals]
     end
 
-    subgraph Swarm[Swarm Loop]
-        Coord[SwarmCoordinator]
+    subgraph Workers[Worker Loop]
+        Coord[Coordinator]
         Decompose[TaskDecomposer]
-        Execute[SwarmExecutor]
+        Execute[WorkerExecutor]
         Aggregate[Result aggregator]
-        VerifySwarm[Verifier]
+        VerifyWorkers[Verifier]
     end
 
     Args --> Analyze --> Mode
     Mode -->|Single| TL
-    Mode -->|Swarm| Coord
+    Mode -->|Workers| Coord
 
     TL --> Verify --> Signals
 
-    Coord --> Decompose --> Execute --> Aggregate --> VerifySwarm
-    VerifySwarm --> Signals
+    Coord --> Decompose --> Execute --> Aggregate --> VerifyWorkers
+    VerifyWorkers --> Signals
 ```
 
 ## 2) Iterative Task Loop (Verification First)
@@ -55,16 +55,18 @@ flowchart LR
     Feedback --> Iteration
 ```
 
-## 3) Swarm Mode + Creative Overseer
+## 3) Worker Mode + Creative Overseer
 
-Swarm mode decomposes work into parallel agents. In parallel, the overseer proposes
-capabilities that could help the task before gaps become blocking.
+Worker mode runs a central execution loop (the "brain") while the Creative Overseer
+observes the loop state and injects new capabilities into the executor. The overseer
+does not replace the loop; it continuously augments it.
 
 ```mermaid
 flowchart TB
-    subgraph Brain[SwarmCoordinator]
+    subgraph Loop[Worker Main Loop]
+        Brain[Coordinator]
         Decompose[TaskDecomposer]
-        Execute[SwarmExecutor]
+        Execute[WorkerExecutor]
         Aggregate[Aggregate results]
         Verify[Verifier]
     end
@@ -76,13 +78,15 @@ flowchart TB
     end
 
     subgraph Overseer[Creative Overseer]
-        Observe[Read task + assignments]
+        Observe[Observe loop state]
         Brainstorm[Generate capability ideas]
         Synthesize[Create skills/MCPs/agents]
         Register[CapabilityRegistry]
     end
 
-    Decompose --> Execute --> Agents --> Aggregate --> Verify
+    Brain --> Decompose --> Execute --> Agents --> Aggregate --> Verify --> Brain
+
+    Brain --> Observe
     Observe --> Brainstorm --> Synthesize --> Register
     Register --> Execute
 ```
