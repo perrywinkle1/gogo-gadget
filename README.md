@@ -55,6 +55,86 @@ These are the core system-level decisions reflected in the code. Each item lists
 
 ## Architecture diagrams
 
+### System overview (single vs swarm)
+
+```mermaid
+flowchart TB
+    subgraph CLI[CLI Entry]
+        Args[Parse args]
+        Analyze[TaskAnalyzer]
+        Mode{Execution mode?}
+    end
+
+    subgraph Single[Single-Agent Loop]
+        TL[TaskLoop]
+        Verify[Verifier]
+        Signals[.gogo-gadget-* signals]
+    end
+
+    subgraph Swarm[Swarm Loop]
+        Coord[SwarmCoordinator]
+        Decompose[TaskDecomposer]
+        Execute[SwarmExecutor]
+        Aggregate[Result aggregator]
+        VerifySwarm[Verifier]
+    end
+
+    Args --> Analyze --> Mode
+    Mode -->|Single| TL
+    Mode -->|Swarm| Coord
+
+    TL --> Verify --> Signals
+
+    Coord --> Decompose --> Execute --> Aggregate --> VerifySwarm
+    VerifySwarm --> Signals
+```
+
+### Swarm main loop + Creative Overseer
+
+```mermaid
+flowchart TB
+    subgraph Loop[Swarm Main Loop]
+        Brain[SwarmCoordinator]
+        Decompose[TaskDecomposer]
+        Execute[SwarmExecutor]
+        Aggregate[Aggregate results]
+        Verify[Verifier]
+    end
+
+    subgraph Agents[Parallel Agents]
+        A1[Agent 1]
+        A2[Agent 2]
+        A3[Agent N]
+    end
+
+    subgraph Overseer[Creative Overseer]
+        Observe[Observe loop state]
+        Brainstorm[Generate capability ideas]
+        Synthesize[Create skills/MCPs/agents]
+        Register[CapabilityRegistry]
+    end
+
+    Brain --> Decompose --> Execute --> Agents --> Aggregate --> Verify --> Brain
+
+    Brain --> Observe
+    Observe --> Brainstorm --> Synthesize --> Register
+    Register --> Execute
+```
+
+### Self-extend pipeline (reactive)
+
+```mermaid
+flowchart LR
+    Output[Model output + errors] --> GapDetect[GapDetector]
+    GapDetect --> Gap{Gap found?}
+    Gap -->|No| Continue[Continue task]
+    Gap -->|Yes| Synthesize[SynthesisEngine]
+    Synthesize --> Verify[Capability verification]
+    Verify --> Registry[CapabilityRegistry]
+    Registry --> HotLoad[HotLoader]
+    HotLoad --> Continue
+```
+
 - Flowcharts + explanations: `docs/architecture/flowchart.md`
 - ASCII overview: `docs/architecture/diagram-ascii.txt`
 
@@ -81,4 +161,3 @@ Runtime artifacts are intentionally not committed:
 
 - `~/.gogo-gadget/` for synthesized capabilities and registry data
 - `~/.claude/skills` for skills that should be available to Claude
-
