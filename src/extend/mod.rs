@@ -9,6 +9,7 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+pub mod context;
 pub mod gap;
 pub mod loader;
 pub mod overseer;
@@ -41,6 +42,9 @@ pub use verify::{
 pub use overseer::{
     BrainstormResult, CapabilityIdea, CreativeOverseer, EffortLevel, OverseerConfig,
 };
+
+// Re-export main types from context module
+pub use context::{SharedContext, TaskPhase, TaskSnapshot};
 
 /// Type of capability that can be synthesized
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

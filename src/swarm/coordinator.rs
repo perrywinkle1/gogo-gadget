@@ -202,6 +202,8 @@ pub struct SwarmCoordinator {
     synthesis_engine: Option<SynthesisEngine>,
     /// Extension attempts counter
     extension_attempts: u32,
+    /// Shared context for overseer observation (Chief of Product pattern)
+    shared_context: Option<crate::extend::SharedContext>,
 }
 
 impl SwarmCoordinator {
@@ -217,6 +219,7 @@ impl SwarmCoordinator {
             gap_detector: None,
             synthesis_engine: None,
             extension_attempts: 0,
+            shared_context: None,
         }
     }
 
@@ -250,6 +253,20 @@ impl SwarmCoordinator {
         self.with_extension_config(config)
     }
 
+    /// Set shared context for Creative Overseer observation
+    ///
+    /// The shared context allows the Creative Overseer (Chief of Product) to
+    /// observe what the swarm is working on and proactively create capabilities.
+    pub fn with_shared_context(mut self, context: crate::extend::SharedContext) -> Self {
+        self.shared_context = Some(context);
+        self
+    }
+
+    /// Get the shared context (for spawning overseer)
+    pub fn shared_context(&self) -> Option<&crate::extend::SharedContext> {
+        self.shared_context.as_ref()
+    }
+
     /// Set shutdown signal handler
     pub fn with_shutdown_signal(mut self, signal: ShutdownSignal) -> Self {
         self.shutdown_signal = Some(signal);
@@ -273,6 +290,12 @@ impl SwarmCoordinator {
             "Swarm coordinator starting with {} agents (iterating until satisfied)",
             self.config.agent_count
         );
+
+        // Update shared context for Creative Overseer observation
+        if let Some(ref ctx) = self.shared_context {
+            ctx.start_task(task);
+            ctx.set_phase(crate::extend::TaskPhase::Analyzing);
+        }
 
         // Clean up any previous signal files
         self.cleanup_signals();
@@ -312,6 +335,13 @@ impl SwarmCoordinator {
             let subtasks = decomposer.decompose(&evolved_task, &analysis, &self.config);
             info!("Task decomposed into {} subtasks", subtasks.len());
 
+            // Update shared context with subtasks for overseer observation
+            if let Some(ref ctx) = self.shared_context {
+                ctx.set_phase(crate::extend::TaskPhase::Decomposing);
+                ctx.set_subtasks(subtasks.clone());
+                ctx.set_iteration(iteration);
+            }
+
             // Print subtask info
             println!();
             println!("📋 Task Decomposition:");
@@ -321,6 +351,11 @@ impl SwarmCoordinator {
             println!();
 
             // Phase 3: Execute subtasks in parallel
+            // Update shared context for Creative Overseer observation
+            if let Some(ref ctx) = self.shared_context {
+                ctx.set_phase(crate::extend::TaskPhase::Executing);
+            }
+
             let executor = if let Some(ref signal) = self.shutdown_signal {
                 SwarmExecutor::new(self.config.clone()).with_shutdown_signal(signal.clone())
             } else {
@@ -328,6 +363,11 @@ impl SwarmCoordinator {
             };
 
             let mut result = executor.execute(subtasks).await?;
+
+            // Update context: Aggregating phase (collecting and resolving results)
+            if let Some(ref ctx) = self.shared_context {
+                ctx.set_phase(crate::extend::TaskPhase::Aggregating);
+            }
 
             // Check for goal drift based on agent work summaries
             let agent_summaries: Vec<String> = result
@@ -390,6 +430,12 @@ impl SwarmCoordinator {
                         println!("════════════════════════════════════════════════════════════════");
                         println!();
                         println!("Reason: {}", reason);
+
+                        // Update context for Creative Overseer observation
+                        if let Some(ref ctx) = self.shared_context {
+                            ctx.set_phase(crate::extend::TaskPhase::Failed);
+                        }
+
                         result.success = false;
                         result.total_duration_ms = start_time.elapsed().as_millis() as u64;
                         return Ok(result);
@@ -401,6 +447,11 @@ impl SwarmCoordinator {
                 }
             } else {
                 // No signal - run verification to check actual build status
+                // Update context for Creative Overseer observation
+                if let Some(ref ctx) = self.shared_context {
+                    ctx.set_phase(crate::extend::TaskPhase::Verifying);
+                }
+
                 let verification_passed = self.verify_result(&result, task).await?;
                 result.verification_passed = verification_passed;
 
@@ -939,6 +990,83 @@ impl SwarmCoordinator {
             // No extension possible, return the result
             return Ok(result);
         }
+    }
+
+    /// Execute a task with the Creative Overseer running alongside
+    ///
+    /// This implements the "Chief of Product" pattern where the overseer
+    /// proactively observes what the swarm is working on and creates
+    /// capabilities that would help, without waiting for failures.
+    pub async fn execute_with_overseer(
+        mut self,
+        task: &str,
+        registry: std::sync::Arc<std::sync::Mutex<CapabilityRegistry>>,
+    ) -> Result<SwarmResult> {
+        use crate::extend::{CreativeOverseer, OverseerConfig, SharedContext};
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use tokio::time::{interval, Duration};
+
+        // Create shared context for brain-overseer communication
+        let context = SharedContext::new();
+
+        // Attach context to coordinator
+        self.shared_context = Some(context.clone());
+
+        // Create the overseer
+        let mut overseer_config = OverseerConfig::default();
+        overseer_config.working_dir = self.config.working_dir.clone();
+        let mut overseer = CreativeOverseer::new(overseer_config, registry);
+
+        // Shutdown flag for overseer
+        let overseer_running = std::sync::Arc::new(AtomicBool::new(true));
+        let overseer_running_clone = overseer_running.clone();
+        let context_clone = context.clone();
+
+        // Spawn the overseer as a background task
+        let overseer_handle = tokio::spawn(async move {
+            info!("Creative Overseer started - observing swarm execution");
+            let mut check_interval = interval(Duration::from_secs(10));
+
+            while overseer_running_clone.load(Ordering::Relaxed) {
+                check_interval.tick().await;
+
+                // Check if there's a task to observe
+                if let Some(snapshot) = context_clone.snapshot() {
+                    if !snapshot.task.is_empty() {
+                        debug!(
+                            "Overseer observing: phase={:?}, iteration={}",
+                            snapshot.phase, snapshot.iteration
+                        );
+
+                        // Try to observe and create capabilities
+                        match overseer.observe_and_create(&context_clone).await {
+                            Ok(result) => {
+                                if result.synthesized_count > 0 {
+                                    info!(
+                                        "Overseer created {} capabilities for swarm",
+                                        result.synthesized_count
+                                    );
+                                }
+                            }
+                            Err(e) => {
+                                warn!("Overseer observation failed: {}", e);
+                            }
+                        }
+                    }
+                }
+            }
+
+            info!("Creative Overseer shutting down");
+        });
+
+        // Run the main swarm execution
+        let result = self.execute(task).await;
+
+        // Stop the overseer
+        overseer_running.store(false, Ordering::Relaxed);
+        let _ = overseer_handle.await;
+
+        result
     }
 }
 

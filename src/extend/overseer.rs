@@ -433,6 +433,183 @@ If no new capabilities would significantly help, return an empty array [].
 
         Ok(result.capability)
     }
+
+    /// Observe task context and proactively create capabilities
+    ///
+    /// This is the main entry point for the "Chief of Product" pattern.
+    /// The overseer watches what the swarm is working on and creates
+    /// tools that would help, without waiting for failures.
+    pub async fn observe_and_create(
+        &mut self,
+        context: &super::context::SharedContext,
+    ) -> Result<BrainstormResult> {
+        let start = std::time::Instant::now();
+
+        // Get current task snapshot
+        let snapshot = context.snapshot().ok_or_else(|| anyhow!("No task context available"))?;
+
+        if snapshot.task.is_empty() {
+            return Ok(BrainstormResult {
+                ideas: vec![],
+                synthesized_count: 0,
+                queued_count: 0,
+                duration_ms: 0,
+            });
+        }
+
+        info!(
+            "Creative Overseer observing task: {} (domains: {:?}, tech: {:?})",
+            &snapshot.task[..snapshot.task.len().min(50)],
+            snapshot.domains,
+            snapshot.technologies
+        );
+
+        // Build a context-aware prompt based on what we observe
+        let prompt = self.build_observation_prompt(&snapshot);
+
+        // Call Claude for proactive capability suggestions
+        let response = self.call_claude(&prompt)?;
+
+        // Parse and process ideas
+        let ideas = self.parse_ideas(&response)?;
+        debug!("Observed {} capability opportunities", ideas.len());
+
+        let mut synthesized_count = 0;
+        let mut queued_count = 0;
+
+        for mut idea in ideas {
+            // Skip if already suggested
+            if context.is_suggested(&idea.name) {
+                debug!("Skipping already-suggested capability: {}", idea.name);
+                continue;
+            }
+
+            if idea.confidence >= self.config.min_confidence_to_synthesize {
+                if self.config.immediate_synthesis {
+                    match self.synthesize_idea(&idea).await {
+                        Ok(_) => {
+                            idea.synthesized = true;
+                            idea.synthesis_success = Some(true);
+                            synthesized_count += 1;
+
+                            // Suggest to the brain that this capability is now available
+                            context.suggest_capability(&idea.name);
+
+                            info!(
+                                "Proactively created capability: {} ({}) - ready for brain to use",
+                                idea.name,
+                                idea.capability_type.as_str()
+                            );
+                        }
+                        Err(e) => {
+                            idea.synthesis_success = Some(false);
+                            warn!("Failed to synthesize {}: {}", idea.name, e);
+                        }
+                    }
+                } else {
+                    self.ideas_queued.push(idea.clone());
+                    queued_count += 1;
+                }
+            }
+            self.ideas_generated.push(idea);
+        }
+
+        let duration_ms = start.elapsed().as_millis() as u64;
+
+        Ok(BrainstormResult {
+            ideas: self.ideas_generated.clone(),
+            synthesized_count,
+            queued_count,
+            duration_ms,
+        })
+    }
+
+    /// Build a prompt based on observing the current task context
+    fn build_observation_prompt(&self, snapshot: &super::context::TaskSnapshot) -> String {
+        let domains_str = if snapshot.domains.is_empty() {
+            "None detected".to_string()
+        } else {
+            snapshot.domains.join(", ")
+        };
+
+        let tech_str = if snapshot.technologies.is_empty() {
+            "None detected".to_string()
+        } else {
+            snapshot.technologies.join(", ")
+        };
+
+        let subtasks_str = if snapshot.subtasks.is_empty() {
+            "No subtasks yet".to_string()
+        } else {
+            snapshot
+                .subtasks
+                .iter()
+                .map(|s| format!("- {}: {}", s.focus, s.description))
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+
+        let already_suggested: Vec<_> = snapshot.suggested_capabilities.iter().collect();
+        let suggested_str = if already_suggested.is_empty() {
+            "None yet".to_string()
+        } else {
+            already_suggested.into_iter().cloned().collect::<Vec<_>>().join(", ")
+        };
+
+        format!(
+            r#"You are the Creative Overseer (Chief of Product) observing a software task.
+
+## Current Task
+{task}
+
+## Detected Domains
+{domains}
+
+## Detected Technologies
+{technologies}
+
+## Subtasks Being Worked On
+{subtasks}
+
+## Already Suggested Capabilities
+{suggested}
+
+## Your Role
+Proactively identify what tools would HELP the agents complete this task.
+Don't wait for them to fail - anticipate their needs.
+
+Think about:
+- What APIs would they likely need to call? (→ MCP)
+- What reusable patterns apply to this domain? (→ Skill)
+- What specialized behaviors would help? (→ Agent)
+- What git hooks or automation would improve quality? (→ Hook)
+
+## Response Format
+Respond with a JSON array (max {max} ideas). Only suggest genuinely useful capabilities:
+
+```json
+[
+  {{
+    "capability_type": "Mcp" | "Skill" | "Agent",
+    "name": "short-identifier",
+    "description": "What it does",
+    "rationale": "Why it helps THIS specific task",
+    "confidence": 0.0-1.0,
+    "effort_estimate": "Low" | "Medium" | "High"
+  }}
+]
+```
+
+Be specific. If nothing would significantly help, return [].
+"#,
+            task = snapshot.task,
+            domains = domains_str,
+            technologies = tech_str,
+            subtasks = subtasks_str,
+            suggested = suggested_str,
+            max = self.config.max_ideas_per_iteration
+        )
+    }
 }
 
 #[cfg(test)]
