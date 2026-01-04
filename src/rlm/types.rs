@@ -50,7 +50,7 @@ impl Default for RlmConfig {
             target_chunk_size: 4000,
             chunk_overlap: 200,
             parallel_exploration: true,
-            navigator_model: Some("claude-opus-4-5-20251101".to_string()),
+            navigator_model: Some("claude-haiku-4-5-20251101".to_string()),
             explorer_model: Some("claude-opus-4-5-20251101".to_string()),
             use_embeddings: false, // Use heuristic scoring, no OpenAI needed
             rate_limit_per_minute: 10,
