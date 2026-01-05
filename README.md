@@ -29,9 +29,9 @@ cargo build --release
 
 - **Single-agent loop**: Iterative execution + verification until completion.
 - **Worker loop**: Task decomposition + parallel agents + aggregation + verification.
-- **Worker prompt refresh**: Capabilities are refreshed each iteration so newly synthesized tools are visible.
-- **Assignment novelty**: Coordinator avoids repeating assignments and falls back to RLM-guided decomposition on repeats.
-- **Self-extend**: Detect capability gaps and synthesize tools on the fly.
+- **Worker prompt refresh**: Capabilities reload from the registry each iteration so newly synthesized skills/MCPs/agents show up.
+- **Assignment novelty**: Coordinator tracks prior focus/files/summaries, avoids repeats, and uses RLM-guided decomposition on repeats.
+- **Self-extend**: Detect capability gaps, synthesize tools, hot-load them, and persist to the registry.
 - **RLM**: Recursive Language Model mode for large codebases and cross-file analysis.
 
 ## Design choices and rationale
@@ -161,5 +161,6 @@ tests/           Unit + integration tests
 
 Runtime artifacts are intentionally not committed:
 
-- `~/.gogo-gadget/` for synthesized capabilities and registry data
+- `./.gogo-gadget/` for project-scoped synthesized capabilities + registry data (when configured)
+- `~/.gogo-gadget/` for global synthesized capabilities + registry data
 - `~/.claude/skills` for skills that should be available to Claude

@@ -902,6 +902,14 @@ async fn main() -> Result<()> {
             // Configure swarm coordinator
             let coordinator = SwarmCoordinator::from_config(&config, agent_count)
                 .with_shutdown_signal(shutdown_signal.clone());
+            let coordinator = if self_extend_enabled {
+                let mut extension_config = gogo_gadget::task_loop::ExtensionConfig::default();
+                extension_config.enabled = true;
+                extension_config.registry_path = working_dir.join(".gogo-gadget").join("capabilities.json");
+                coordinator.with_extension_config(extension_config)
+            } else {
+                coordinator
+            };
 
             // Execute with or without Creative Overseer
             let swarm_result = if args.no_overseer {
@@ -913,7 +921,15 @@ async fn main() -> Result<()> {
                 use std::sync::{Arc, Mutex};
 
                 let registry_path = working_dir.join(".gogo-gadget").join("capabilities.json");
-                let registry = Arc::new(Mutex::new(CapabilityRegistry::new(&registry_path)));
+                let registry = Arc::new(Mutex::new(
+                    CapabilityRegistry::load_from(&registry_path).unwrap_or_else(|err| {
+                        eprintln!(
+                            "Warning: failed to load capability registry from {:?}: {}",
+                            registry_path, err
+                        );
+                        CapabilityRegistry::new(&registry_path)
+                    }),
+                ));
 
                 println!(
                     "{}",

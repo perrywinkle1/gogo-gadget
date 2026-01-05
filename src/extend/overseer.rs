@@ -438,6 +438,9 @@ If no new capabilities would significantly help, return an empty array [].
         {
             let mut registry = self.registry.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
             registry.register(result.capability.clone())?;
+            if let Err(e) = registry.save() {
+                warn!("Failed to save capability registry: {}", e);
+            }
         }
 
         // HOT LOAD: Install capability into Claude Code config

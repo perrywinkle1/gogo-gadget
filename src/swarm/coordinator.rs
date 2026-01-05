@@ -367,7 +367,17 @@ impl SwarmCoordinator {
     /// Enable self-extending capabilities with custom configuration
     pub fn with_extension_config(mut self, config: ExtensionConfig) -> Self {
         if config.enabled {
-            self.capability_registry = Some(CapabilityRegistry::new(&config.registry_path));
+            let registry = match CapabilityRegistry::load_from(&config.registry_path) {
+                Ok(registry) => registry,
+                Err(err) => {
+                    warn!(
+                        "Failed to load capability registry from {:?}: {}",
+                        config.registry_path, err
+                    );
+                    CapabilityRegistry::new(&config.registry_path)
+                }
+            };
+            self.capability_registry = Some(registry);
             self.gap_detector = Some(GapDetector::new());
             self.synthesis_engine = Some(SynthesisEngine::new(&config.skills_dir));
         }
@@ -680,19 +690,18 @@ impl SwarmCoordinator {
     }
 
     fn refresh_capability_context(&self) -> Option<String> {
-        let enabled = self
-            .extension_config
-            .as_ref()
-            .map(|config| config.enabled)
-            .unwrap_or(false);
-        if !enabled {
+        let config = self.extension_config.as_ref()?;
+        if !config.enabled {
             return None;
         }
 
-        let registry = match CapabilityRegistry::load_or_create() {
+        let registry = match CapabilityRegistry::load_from(&config.registry_path) {
             Ok(registry) => registry,
             Err(err) => {
-                warn!("Failed to load capability registry: {}", err);
+                warn!(
+                    "Failed to load capability registry from {:?}: {}",
+                    config.registry_path, err
+                );
                 return None;
             }
         };
@@ -1267,6 +1276,8 @@ impl SwarmCoordinator {
         if let Some(ref mut registry) = self.capability_registry {
             if let Err(e) = registry.register(synthesized.capability.clone()) {
                 warn!("Registration failed (non-fatal): {}", e);
+            } else if let Err(e) = registry.save() {
+                warn!("Failed to save capability registry: {}", e);
             }
         }
 
