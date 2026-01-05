@@ -137,7 +137,8 @@ impl HotLoader {
     pub fn new() -> Self {
         let home = dirs_home().unwrap_or_else(|| PathBuf::from("."));
         Self {
-            claude_settings_path: home.join(".claude").join("settings.json"),
+            // Use claude_desktop_config.json for MCP registration (not settings.json)
+            claude_settings_path: home.join(".claude").join("claude_desktop_config.json"),
             skills_dir: home.join(".claude").join("skills"),
             agents_dir: home.join(".claude").join("agents"),
             mcp_dir: home.join(".claude").join("mcp-servers"),
