@@ -11,7 +11,7 @@
 //! 4. Learns from execution patterns to improve future suggestions
 
 use crate::extend::{
-    CapabilityGap, CapabilityRegistry, CapabilityType, SynthesisEngine, SynthesizedCapability,
+    CapabilityGap, CapabilityRegistry, CapabilityType, HotLoader, SynthesisEngine, SynthesizedCapability,
 };
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
@@ -145,6 +145,7 @@ pub struct CreativeOverseer {
     config: OverseerConfig,
     registry: Arc<Mutex<CapabilityRegistry>>,
     synthesis_engine: SynthesisEngine,
+    hot_loader: HotLoader,
     ideas_generated: Vec<CapabilityIdea>,
     ideas_queued: Vec<CapabilityIdea>,
 }
@@ -154,11 +155,13 @@ impl CreativeOverseer {
     pub fn new(config: OverseerConfig, registry: Arc<Mutex<CapabilityRegistry>>) -> Self {
         let output_dir = config.working_dir.join(".gogo-gadget").join("synthesized");
         let synthesis_engine = SynthesisEngine::new(&output_dir);
+        let hot_loader = HotLoader::new();
 
         Self {
             config,
             registry,
             synthesis_engine,
+            hot_loader,
             ideas_generated: Vec::new(),
             ideas_queued: Vec::new(),
         }
@@ -425,10 +428,31 @@ If no new capabilities would significantly help, return an empty array [].
         // Use the synthesis engine
         let result = self.synthesis_engine.synthesize(&gap).await?;
 
-        // Register the capability
+        // Register the capability in GoGoGadget's internal registry
         {
             let mut registry = self.registry.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
             registry.register(result.capability.clone())?;
+        }
+
+        // HOT LOAD: Install capability into Claude Code config
+        // This makes MCPs available in claude_desktop_config.json
+        // and copies skills to ~/.claude/skills/
+        match self.hot_loader.load(&result.capability) {
+            Ok(load_result) => {
+                if load_result.success {
+                    info!(
+                        "Hot-loaded {} to {:?} (restart_required: {})",
+                        result.capability.name,
+                        load_result.installed_path,
+                        load_result.restart_required
+                    );
+                } else {
+                    warn!("Hot-load failed for {}: {}", result.capability.name, load_result.message);
+                }
+            }
+            Err(e) => {
+                warn!("Failed to hot-load {}: {}", result.capability.name, e);
+            }
         }
 
         Ok(result.capability)
