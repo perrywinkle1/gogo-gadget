@@ -1856,3 +1856,364 @@ fn test_verification_result_serialization() {
     assert_eq!(deserialized.errors, result.errors);
     assert_eq!(deserialized.warnings, result.warnings);
 }
+
+// ============================================================================
+// Creative Pipeline Integration Tests
+// ============================================================================
+
+mod creative_pipeline_tests {
+    use gogo_gadget::rlm::{
+        RlmCapabilityType, RlmCapabilityRegistry, CreativeDomain, PipelineStage,
+    };
+
+    #[test]
+    fn test_creative_domain_variants() {
+        // Verify all creative domain variants exist and are distinct
+        let domains = vec![
+            CreativeDomain::Video,
+            CreativeDomain::Image,
+            CreativeDomain::Audio,
+            CreativeDomain::Text,
+            CreativeDomain::ThreeD,
+            CreativeDomain::MultiModal,
+        ];
+
+        assert_eq!(domains.len(), 6);
+
+        // Verify they're distinct
+        for (i, d1) in domains.iter().enumerate() {
+            for (j, d2) in domains.iter().enumerate() {
+                if i != j {
+                    assert_ne!(d1, d2);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_pipeline_stage_variants() {
+        // Verify all pipeline stages exist
+        let stages = vec![
+            PipelineStage::Ideation,
+            PipelineStage::PromptEngineering,
+            PipelineStage::Generation,
+            PipelineStage::PostProcessing,
+            PipelineStage::QualityReview,
+            PipelineStage::Assembly,
+            PipelineStage::Distribution,
+        ];
+
+        assert_eq!(stages.len(), 7);
+    }
+
+    #[test]
+    fn test_creative_pipeline_agent_creation() {
+        let agent = RlmCapabilityType::creative_agent(
+            "video-generator",
+            CreativeDomain::Video,
+            PipelineStage::Generation,
+            vec!["mcp__veo__veo_generate_video".to_string(), "mcp__kling__generate".to_string()],
+            "Generates video content from text prompts using Veo and Kling",
+        );
+
+        assert_eq!(agent.name(), "video-generator");
+
+        if let RlmCapabilityType::CreativePipelineAgent {
+            domain,
+            stage,
+            required_tools,
+            description,
+            ..
+        } = &agent {
+            assert_eq!(*domain, CreativeDomain::Video);
+            assert_eq!(*stage, PipelineStage::Generation);
+            assert_eq!(required_tools.len(), 2);
+            assert!(description.contains("Veo"));
+        } else {
+            panic!("Expected CreativePipelineAgent");
+        }
+    }
+
+    #[test]
+    fn test_creative_pipeline_agent_for_audio() {
+        let agent = RlmCapabilityType::creative_agent(
+            "audio-synthesizer",
+            CreativeDomain::Audio,
+            PipelineStage::Generation,
+            vec!["mcp__elevenlabs__text_to_speech".to_string()],
+            "Generates voice and audio using ElevenLabs",
+        );
+
+        assert_eq!(agent.name(), "audio-synthesizer");
+
+        if let RlmCapabilityType::CreativePipelineAgent { domain, .. } = &agent {
+            assert_eq!(*domain, CreativeDomain::Audio);
+        } else {
+            panic!("Expected CreativePipelineAgent");
+        }
+    }
+
+    #[test]
+    fn test_creative_pipeline_agent_for_image() {
+        let agent = RlmCapabilityType::creative_agent(
+            "image-generator",
+            CreativeDomain::Image,
+            PipelineStage::Generation,
+            vec![
+                "mcp__gemini__gemini_generate_image".to_string(),
+                "mcp__midjourney__generate".to_string(),
+            ],
+            "Generates images using Gemini and Midjourney",
+        );
+
+        assert_eq!(agent.name(), "image-generator");
+
+        if let RlmCapabilityType::CreativePipelineAgent {
+            domain,
+            required_tools,
+            ..
+        } = &agent {
+            assert_eq!(*domain, CreativeDomain::Image);
+            assert!(required_tools.iter().any(|t| t.contains("gemini")));
+            assert!(required_tools.iter().any(|t| t.contains("midjourney")));
+        } else {
+            panic!("Expected CreativePipelineAgent");
+        }
+    }
+
+    #[test]
+    fn test_creative_pipeline_agent_for_post_processing() {
+        let agent = RlmCapabilityType::creative_agent(
+            "video-compositor",
+            CreativeDomain::Video,
+            PipelineStage::PostProcessing,
+            vec!["mcp__ffmpeg__compose".to_string()],
+            "Composes video segments using FFmpeg",
+        );
+
+        if let RlmCapabilityType::CreativePipelineAgent { stage, .. } = &agent {
+            assert_eq!(*stage, PipelineStage::PostProcessing);
+        } else {
+            panic!("Expected CreativePipelineAgent");
+        }
+    }
+
+    #[test]
+    fn test_creative_pipeline_agent_multimodal() {
+        let agent = RlmCapabilityType::creative_agent(
+            "scene-orchestrator",
+            CreativeDomain::MultiModal,
+            PipelineStage::Assembly,
+            vec![
+                "mcp__veo__veo_generate_video".to_string(),
+                "mcp__elevenlabs__text_to_speech".to_string(),
+                "mcp__gemini__gemini_generate_image".to_string(),
+            ],
+            "Orchestrates multi-modal content creation across video, audio, and images",
+        );
+
+        if let RlmCapabilityType::CreativePipelineAgent {
+            domain,
+            stage,
+            required_tools,
+            ..
+        } = &agent {
+            assert_eq!(*domain, CreativeDomain::MultiModal);
+            assert_eq!(*stage, PipelineStage::Assembly);
+            assert_eq!(required_tools.len(), 3);
+        } else {
+            panic!("Expected CreativePipelineAgent");
+        }
+    }
+
+    #[test]
+    fn test_creative_domain_serialization() {
+        let domain = CreativeDomain::Video;
+        let json = serde_json::to_string(&domain).unwrap();
+        let deserialized: CreativeDomain = serde_json::from_str(&json).unwrap();
+        assert_eq!(domain, deserialized);
+    }
+
+    #[test]
+    fn test_pipeline_stage_serialization() {
+        let stage = PipelineStage::Generation;
+        let json = serde_json::to_string(&stage).unwrap();
+        let deserialized: PipelineStage = serde_json::from_str(&json).unwrap();
+        assert_eq!(stage, deserialized);
+    }
+
+    #[test]
+    fn test_creative_pipeline_agent_serialization() {
+        let agent = RlmCapabilityType::creative_agent(
+            "test-agent",
+            CreativeDomain::Audio,
+            PipelineStage::Generation,
+            vec!["tool1".to_string(), "tool2".to_string()],
+            "Test description",
+        );
+
+        let json = serde_json::to_string(&agent).unwrap();
+        let deserialized: RlmCapabilityType = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(agent.name(), deserialized.name());
+    }
+
+    #[test]
+    fn test_registry_with_creative_agents() {
+        let mut registry = RlmCapabilityRegistry::new();
+
+        // Add various capability types
+        registry.register(RlmCapabilityType::mcp_server(
+            "elevenlabs",
+            "audio",
+            "ElevenLabs voice synthesis",
+        ));
+
+        registry.register(RlmCapabilityType::creative_agent(
+            "video-gen",
+            CreativeDomain::Video,
+            PipelineStage::Generation,
+            vec!["mcp__veo__generate".to_string()],
+            "Video generation",
+        ));
+
+        registry.register(RlmCapabilityType::creative_agent(
+            "audio-gen",
+            CreativeDomain::Audio,
+            PipelineStage::Generation,
+            vec!["mcp__elevenlabs__tts".to_string()],
+            "Audio generation",
+        ));
+
+        assert_eq!(registry.capabilities.len(), 3);
+
+        // Count creative pipeline agents
+        let creative_agents: Vec<_> = registry.capabilities.iter()
+            .filter(|c| matches!(c, RlmCapabilityType::CreativePipelineAgent { .. }))
+            .collect();
+        assert_eq!(creative_agents.len(), 2);
+    }
+
+    #[test]
+    fn test_capability_type_name_for_all_variants() {
+        let mcp = RlmCapabilityType::mcp_server("test-mcp", "api", "desc");
+        let skill = RlmCapabilityType::skill("test-skill", "trigger", "purpose");
+        let agent = RlmCapabilityType::agent("test-agent", "spec");
+        let creative = RlmCapabilityType::creative_agent(
+            "test-creative",
+            CreativeDomain::Video,
+            PipelineStage::Ideation,
+            vec![],
+            "desc",
+        );
+
+        assert_eq!(mcp.name(), "test-mcp");
+        assert_eq!(skill.name(), "test-skill");
+        assert_eq!(agent.name(), "test-agent");
+        assert_eq!(creative.name(), "test-creative");
+    }
+
+    #[test]
+    fn test_all_pipeline_stages_in_order() {
+        // Test that we can create agents for every pipeline stage
+        let stages = [
+            (PipelineStage::Ideation, "ideation-agent"),
+            (PipelineStage::PromptEngineering, "prompt-agent"),
+            (PipelineStage::Generation, "generation-agent"),
+            (PipelineStage::PostProcessing, "postproc-agent"),
+            (PipelineStage::QualityReview, "review-agent"),
+            (PipelineStage::Assembly, "assembly-agent"),
+            (PipelineStage::Distribution, "distribution-agent"),
+        ];
+
+        for (stage, name) in stages {
+            let agent = RlmCapabilityType::creative_agent(
+                name,
+                CreativeDomain::MultiModal,
+                stage,
+                vec![],
+                "Test agent",
+            );
+
+            if let RlmCapabilityType::CreativePipelineAgent { stage: s, .. } = agent {
+                assert_eq!(s, stage);
+            } else {
+                panic!("Expected CreativePipelineAgent for stage {:?}", stage);
+            }
+        }
+    }
+
+    #[test]
+    fn test_all_creative_domains() {
+        // Test creating agents for every domain
+        let domains = [
+            (CreativeDomain::Video, "video"),
+            (CreativeDomain::Image, "image"),
+            (CreativeDomain::Audio, "audio"),
+            (CreativeDomain::Text, "text"),
+            (CreativeDomain::ThreeD, "threed"),
+            (CreativeDomain::MultiModal, "multimodal"),
+        ];
+
+        for (domain, name) in domains {
+            let agent = RlmCapabilityType::creative_agent(
+                name,
+                domain,
+                PipelineStage::Generation,
+                vec![],
+                "Test agent",
+            );
+
+            if let RlmCapabilityType::CreativePipelineAgent { domain: d, .. } = agent {
+                assert_eq!(d, domain);
+            } else {
+                panic!("Expected CreativePipelineAgent for domain {:?}", domain);
+            }
+        }
+    }
+
+    #[test]
+    fn test_creative_pipeline_agent_with_empty_tools() {
+        let agent = RlmCapabilityType::creative_agent(
+            "simple-agent",
+            CreativeDomain::Text,
+            PipelineStage::Ideation,
+            vec![],
+            "Simple text ideation without external tools",
+        );
+
+        if let RlmCapabilityType::CreativePipelineAgent { required_tools, .. } = agent {
+            assert!(required_tools.is_empty());
+        } else {
+            panic!("Expected CreativePipelineAgent");
+        }
+    }
+
+    #[test]
+    fn test_creative_pipeline_agent_with_many_tools() {
+        let tools = vec![
+            "mcp__veo__veo_generate_video".to_string(),
+            "mcp__veo__veo_extend_video".to_string(),
+            "mcp__gemini__gemini_generate_image".to_string(),
+            "mcp__elevenlabs__text_to_speech".to_string(),
+            "mcp__suno__generate_music".to_string(),
+            "mcp__ffmpeg__compose".to_string(),
+        ];
+
+        let agent = RlmCapabilityType::creative_agent(
+            "full-pipeline-agent",
+            CreativeDomain::MultiModal,
+            PipelineStage::Assembly,
+            tools.clone(),
+            "Full pipeline with many tools",
+        );
+
+        if let RlmCapabilityType::CreativePipelineAgent { required_tools, .. } = agent {
+            assert_eq!(required_tools.len(), 6);
+            assert!(required_tools.contains(&"mcp__veo__veo_generate_video".to_string()));
+            assert!(required_tools.contains(&"mcp__ffmpeg__compose".to_string()));
+        } else {
+            panic!("Expected CreativePipelineAgent");
+        }
+    }
+}

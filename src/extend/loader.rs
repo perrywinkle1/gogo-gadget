@@ -334,29 +334,29 @@ impl HotLoader {
 
     /// Register an agent capability
     ///
-    /// Agents are markdown files similar to skills.
-    /// Claude Code expects: ~/.claude/agents/{name}/AGENT.md
+    /// Agents are flat markdown files with YAML frontmatter.
+    /// Claude Code expects: ~/.claude/agents/{name}.md (NOT subdirectories!)
     /// No restart required.
     pub fn register_agent(&self, capability: &SynthesizedCapability) -> Result<LoadResult> {
         info!("Registering agent: {}", capability.name);
 
-        // Claude Code expects agents in subdirectory structure: agents/{name}/AGENT.md
+        // Ensure agents directory exists
+        fs::create_dir_all(&self.agents_dir).context("Failed to create agents directory")?;
+
+        // Claude Code expects flat files: agents/{name}.md (NOT subdirectories)
         let agent_name = capability.name.trim_end_matches(".AGENT.md");
-        let agent_dir = self.agents_dir.join(agent_name);
-        fs::create_dir_all(&agent_dir).context("Failed to create agent directory")?;
+        let dest = self.agents_dir.join(format!("{}.md", agent_name));
 
-        let dest = agent_dir.join("AGENT.md");
-
-        // Copy the agent file
-        if capability.path.is_file() {
-            fs::copy(&capability.path, &dest).context("Failed to copy agent file")?;
+        // Read the source agent content
+        let content = if capability.path.is_file() {
+            fs::read_to_string(&capability.path).context("Failed to read agent file")?
         } else if capability.path.is_dir() {
             let agent_file = capability.path.join(format!("{}.AGENT.md", agent_name));
             let alt_agent_file = capability.path.join("AGENT.md");
             if agent_file.exists() {
-                fs::copy(&agent_file, &dest)?;
+                fs::read_to_string(&agent_file)?
             } else if alt_agent_file.exists() {
-                fs::copy(&alt_agent_file, &dest)?;
+                fs::read_to_string(&alt_agent_file)?
             } else {
                 return Err(anyhow::anyhow!(
                     "Could not find agent file in directory {:?}",
@@ -368,15 +368,28 @@ impl HotLoader {
                 "Agent path does not exist: {:?}",
                 capability.path
             ));
-        }
+        };
 
+        // Ensure content has YAML frontmatter (required by Claude Code)
+        let final_content = if content.starts_with("---\n") {
+            content
+        } else {
+            // Extract description from the first blockquote or first paragraph
+            let description = extract_agent_description(&content, agent_name);
+            format!(
+                "---\nname: {}\ndescription: {}\n---\n\n{}",
+                agent_name, description, content
+            )
+        };
+
+        fs::write(&dest, final_content).context("Failed to write agent file")?;
         debug!("Agent installed at {:?}", dest);
 
         Ok(LoadResult::success(format!(
             "Agent '{}' registered and active at {:?}",
-            agent_name, agent_dir
+            agent_name, dest
         ))
-        .with_path(agent_dir))
+        .with_path(dest))
     }
 
     /// Register a hook capability
@@ -601,19 +614,26 @@ impl HotLoader {
 
     /// Unregister an agent capability
     pub fn unregister_agent(&self, name: &str) -> Result<LoadResult> {
-        let agent_name = name.trim_end_matches(".AGENT.md");
+        let agent_name = name.trim_end_matches(".AGENT.md").trim_end_matches(".md");
 
-        // Try subdirectory structure first (Claude Code standard)
-        let dir_path = self.agents_dir.join(agent_name);
-        if dir_path.is_dir() {
-            fs::remove_dir_all(&dir_path)?;
+        // Claude Code uses flat files: agents/{name}.md
+        let file_path = self.agents_dir.join(format!("{}.md", agent_name));
+        if file_path.exists() {
+            fs::remove_file(&file_path)?;
             return Ok(LoadResult::success(format!("Agent '{}' unregistered", agent_name)));
         }
 
-        // Fallback to legacy flat file structure
-        let file_path = self.agents_dir.join(format!("{}.AGENT.md", agent_name));
-        if file_path.exists() {
-            fs::remove_file(&file_path)?;
+        // Fallback: try legacy subdirectory structure
+        let dir_path = self.agents_dir.join(agent_name);
+        if dir_path.is_dir() {
+            fs::remove_dir_all(&dir_path)?;
+            return Ok(LoadResult::success(format!("Agent '{}' unregistered (legacy dir)", agent_name)));
+        }
+
+        // Fallback: try .AGENT.md extension
+        let legacy_path = self.agents_dir.join(format!("{}.AGENT.md", agent_name));
+        if legacy_path.exists() {
+            fs::remove_file(&legacy_path)?;
             return Ok(LoadResult::success(format!("Agent '{}' unregistered", agent_name)));
         }
 
@@ -684,21 +704,26 @@ impl HotLoader {
         for entry in fs::read_dir(&self.agents_dir)? {
             let entry = entry?;
             let path = entry.path();
-            // Claude Code uses subdirectory structure: agents/{name}/AGENT.md
+
+            // Claude Code uses flat files: agents/{name}.md
+            if path.is_file() {
+                if let Some(name) = path.file_name() {
+                    let name = name.to_string_lossy();
+                    if name.ends_with(".md") {
+                        agents.push(name.trim_end_matches(".md").to_string());
+                    } else if name.ends_with(".AGENT.md") {
+                        // Legacy format
+                        agents.push(name.trim_end_matches(".AGENT.md").to_string());
+                    }
+                }
+            }
+
+            // Also support legacy subdirectory structure
             if path.is_dir() {
                 let agent_file = path.join("AGENT.md");
                 if agent_file.exists() {
                     if let Some(name) = path.file_name() {
                         agents.push(name.to_string_lossy().to_string());
-                    }
-                }
-            }
-            // Also support legacy flat file structure
-            if path.is_file() {
-                if let Some(name) = path.file_name() {
-                    let name = name.to_string_lossy();
-                    if name.ends_with(".AGENT.md") {
-                        agents.push(name.trim_end_matches(".AGENT.md").to_string());
                     }
                 }
             }
@@ -794,6 +819,33 @@ fn dirs_home() -> Option<PathBuf> {
         .ok()
         .map(PathBuf::from)
         .or_else(|| std::env::var("USERPROFILE").ok().map(PathBuf::from))
+}
+
+/// Extract description from agent markdown content
+/// Looks for blockquote (> description) or first paragraph after title
+fn extract_agent_description(content: &str, fallback_name: &str) -> String {
+    // Try to find a blockquote description (common pattern: > Description here)
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("> ") {
+            let desc = trimmed.trim_start_matches("> ").trim();
+            if !desc.is_empty() && desc.len() > 10 {
+                // Escape any quotes and limit length
+                let escaped = desc.replace('"', "'");
+                return if escaped.len() > 200 {
+                    format!("{}...", &escaped[..197])
+                } else {
+                    escaped
+                };
+            }
+        }
+    }
+
+    // Fallback: generate from name
+    format!(
+        "Specialized agent for {}",
+        fallback_name.replace('-', " ").replace('_', " ")
+    )
 }
 
 /// Recursively copy a directory
@@ -916,8 +968,8 @@ mod tests {
         let source_dir = temp_dir.path().join("source");
         fs::create_dir_all(&source_dir).unwrap();
 
-        // Create a source agent file
-        let agent_content = "# Test Agent\n\n## Specialization\nTest spec\n";
+        // Create a source agent file with blockquote description
+        let agent_content = "# Test Agent\n\n> Specialized agent for testing purposes and validation\n\n## Specialization\nTest spec\n";
         let source_agent = source_dir.join("test-agent.AGENT.md");
         fs::write(&source_agent, agent_content).unwrap();
 
@@ -937,9 +989,13 @@ mod tests {
         assert!(result.success);
         assert!(!result.restart_required);
 
-        // Verify the agent was copied (subdirectory structure)
-        let installed_agent = agents_dir.join("test-agent").join("AGENT.md");
+        // Verify the agent was written as flat file with YAML frontmatter
+        let installed_agent = agents_dir.join("test-agent.md");
         assert!(installed_agent.exists());
+        let content = fs::read_to_string(&installed_agent).unwrap();
+        assert!(content.starts_with("---\n"));
+        assert!(content.contains("name: test-agent"));
+        assert!(content.contains("description:"));
     }
 
     #[test]

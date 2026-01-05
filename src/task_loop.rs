@@ -19,7 +19,7 @@
 
 use crate::extend::{
     CapabilityGap, CapabilityRegistry, GapDetector, HotLoader, SynthesisEngine,
-    CapabilityVerifier, SynthesizedCapability,
+    CapabilityVerifier, SynthesizedCapability, HookEvent,
 };
 use crate::verify::{MockDataResult, Severity, Verifier};
 use crate::{
@@ -53,6 +53,49 @@ const MAX_CONSECUTIVE_FAILURES: u32 = 10;
 
 /// Maximum self-extension attempts per task (prevent infinite loops)
 const MAX_EXTENSION_ATTEMPTS: u32 = 3;
+
+/// Configuration for PreToolUse hook logging
+#[derive(Debug, Clone)]
+pub struct HookLoggingConfig {
+    /// Enable PreToolUse hook logging
+    pub enabled: bool,
+    /// Path to the hook log file
+    pub log_path: PathBuf,
+    /// Hook events to log
+    pub events: Vec<HookEvent>,
+}
+
+impl Default for HookLoggingConfig {
+    fn default() -> Self {
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+        Self {
+            enabled: false,
+            log_path: PathBuf::from(&home).join(".gogo-gadget/hook-logs.jsonl"),
+            events: vec![HookEvent::PreToolUse],
+        }
+    }
+}
+
+/// A logged hook event entry
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct HookLogEntry {
+    /// Timestamp of the hook execution
+    pub timestamp: u64,
+    /// The hook event type
+    pub event: String,
+    /// The tool being used (for PreToolUse/PostToolUse)
+    pub tool_name: Option<String>,
+    /// Iteration number
+    pub iteration: u32,
+    /// Task context (shortened)
+    pub task_context: String,
+    /// Duration of hook execution in ms
+    pub duration_ms: Option<u64>,
+    /// Success status
+    pub success: bool,
+    /// Any output from the hook
+    pub output: Option<String>,
+}
 
 /// Configuration for self-extending capability system
 #[derive(Debug, Clone)]
@@ -117,6 +160,8 @@ pub struct TaskLoop {
     synthesis_engine: Option<SynthesisEngine>,
     /// Extension attempts counter for current task
     extension_attempts: u32,
+    /// Hook logging configuration
+    hook_logging_config: HookLoggingConfig,
 }
 
 impl TaskLoop {
@@ -137,7 +182,96 @@ impl TaskLoop {
             gap_detector: None,
             synthesis_engine: None,
             extension_attempts: 0,
+            hook_logging_config: HookLoggingConfig::default(),
         }
+    }
+
+    /// Enable PreToolUse hook logging
+    pub fn with_hook_logging(mut self, config: HookLoggingConfig) -> Self {
+        self.hook_logging_config = config;
+        self
+    }
+
+    /// Enable hook logging with default settings
+    pub fn with_hook_logging_enabled(self) -> Self {
+        let mut config = HookLoggingConfig::default();
+        config.enabled = true;
+        self.with_hook_logging(config)
+    }
+
+    /// Log a hook event to the configured log file
+    fn log_hook_event(&self, entry: &HookLogEntry) {
+        if !self.hook_logging_config.enabled {
+            return;
+        }
+
+        // Ensure parent directory exists
+        if let Some(parent) = self.hook_logging_config.log_path.parent() {
+            if let Err(e) = fs::create_dir_all(parent) {
+                warn!("Failed to create hook log directory: {}", e);
+                return;
+            }
+        }
+
+        // Append the entry as JSONL
+        match serde_json::to_string(entry) {
+            Ok(json) => {
+                use std::io::Write;
+                if let Ok(mut file) = std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(&self.hook_logging_config.log_path)
+                {
+                    if let Err(e) = writeln!(file, "{}", json) {
+                        warn!("Failed to write hook log entry: {}", e);
+                    } else {
+                        debug!("Logged hook event: {:?}", entry.event);
+                    }
+                }
+            }
+            Err(e) => {
+                warn!("Failed to serialize hook log entry: {}", e);
+            }
+        }
+    }
+
+    /// Execute PreToolUse hooks and log them
+    fn execute_pre_tool_use_hooks(&self, tool_name: &str, iteration: u32, task: &str) {
+        if !self.hook_logging_config.enabled {
+            return;
+        }
+
+        if !self.hook_logging_config.events.contains(&HookEvent::PreToolUse) {
+            return;
+        }
+
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
+        // Truncate task context for logging
+        let task_context = if task.len() > 100 {
+            format!("{}...", &task[..100])
+        } else {
+            task.to_string()
+        };
+
+        let entry = HookLogEntry {
+            timestamp,
+            event: "PreToolUse".to_string(),
+            tool_name: Some(tool_name.to_string()),
+            iteration,
+            task_context,
+            duration_ms: None,
+            success: true,
+            output: None,
+        };
+
+        self.log_hook_event(&entry);
+        info!("PreToolUse hook logged for tool: {}", tool_name);
     }
 
     /// Enable self-extending capabilities with custom configuration
@@ -337,6 +471,9 @@ impl TaskLoop {
             );
 
             let iter_start = Instant::now();
+
+            // Log PreToolUse hook for Claude execution
+            self.execute_pre_tool_use_hooks("claude", iteration, task);
 
             // Execute Claude with timeout
             let result = timeout(self.iteration_timeout, self.run_claude(&iter_prompt)).await;
@@ -868,8 +1005,22 @@ impl TaskLoop {
         // Step 3: Load the capability (hot load)
         info!("Hot loading capability: {}", capability.name);
         let loader = HotLoader::new();
-        if let Err(e) = loader.load(&capability) {
-            warn!("Hot loading failed (non-fatal): {}", e);
+        match loader.load(&capability) {
+            Ok(load_result) => {
+                if load_result.success {
+                    info!(
+                        "✅ Hot-loaded {} to {:?} (restart_required: {})",
+                        capability.name,
+                        load_result.installed_path,
+                        load_result.restart_required
+                    );
+                } else {
+                    warn!("Hot-load returned failure: {}", load_result.message);
+                }
+            }
+            Err(e) => {
+                warn!("Hot loading failed: {}", e);
+            }
         }
 
         // Step 4: Register the capability

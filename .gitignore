@@ -8,3 +8,5 @@ Cargo.lock
 .jarvis/
 .swarm-notification
 *.log
+yourharness-web/
+mcp-servers/

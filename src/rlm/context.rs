@@ -1,16 +1,98 @@
 //! RLM Context - Explorable environment for recursive queries
 //!
 //! Treats large inputs as environments that can be navigated recursively.
+//! Features:
+//! - Semantic clustering for related content grouping
+//! - Intelligent context windows with sliding overlap
+//! - Priority queue for exploration ordering
+//! - Dependency graph for structural relationships
+//! - Attention-weighted chunk selection
 
 use crate::rlm::chunker::{ChunkStrategy, ContextChunker, DefaultChunker};
 use crate::rlm::types::{Chunk, RlmConfig};
 use anyhow::Result;
-use std::collections::HashMap;
+use std::collections::{BinaryHeap, HashMap, HashSet, VecDeque};
+use std::cmp::Ordering;
 use std::fmt;
 use std::path::{Path, PathBuf};
 use tracing::{debug, info};
 
-/// An explorable context environment
+/// Priority-scored chunk for exploration ordering
+#[derive(Clone)]
+pub struct ScoredChunk {
+    pub chunk_id: String,
+    pub priority: f32,
+    pub depth: u32,
+}
+
+impl PartialEq for ScoredChunk {
+    fn eq(&self, other: &Self) -> bool {
+        self.chunk_id == other.chunk_id
+    }
+}
+
+impl Eq for ScoredChunk {}
+
+impl PartialOrd for ScoredChunk {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for ScoredChunk {
+    fn cmp(&self, other: &Self) -> Ordering {
+        // Higher priority first, then lower depth
+        match self.priority.partial_cmp(&other.priority) {
+            Some(Ordering::Equal) | None => other.depth.cmp(&self.depth),
+            Some(ord) => ord,
+        }
+    }
+}
+
+/// Semantic cluster of related chunks
+#[derive(Debug, Clone)]
+pub struct SemanticCluster {
+    /// Unique cluster identifier
+    pub id: String,
+    /// Chunk IDs in this cluster
+    pub chunk_ids: Vec<String>,
+    /// Cluster centroid (average embedding if available)
+    pub centroid: Option<Vec<f32>>,
+    /// Cluster coherence score (0-1)
+    pub coherence: f32,
+    /// Dominant topics/keywords
+    pub topics: Vec<String>,
+}
+
+/// Dependency edge between chunks
+#[derive(Debug, Clone)]
+pub struct ChunkDependency {
+    /// Source chunk ID
+    pub from: String,
+    /// Target chunk ID
+    pub to: String,
+    /// Dependency type (import, call, reference, structural)
+    pub dep_type: DependencyType,
+    /// Strength of the relationship (0-1)
+    pub strength: f32,
+}
+
+/// Types of dependencies between chunks
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DependencyType {
+    /// Import/use statement
+    Import,
+    /// Function call
+    Call,
+    /// Type reference
+    TypeRef,
+    /// Structural containment (parent-child)
+    Structural,
+    /// Semantic similarity
+    Semantic,
+}
+
+/// An explorable context environment with advanced navigation features
 pub struct RlmContext {
     /// All chunks indexed by ID
     chunks: HashMap<String, Chunk>,
@@ -29,6 +111,96 @@ pub struct RlmContext {
 
     /// Configuration
     config: RlmConfig,
+
+    /// Semantic clusters for related content grouping
+    clusters: Vec<SemanticCluster>,
+
+    /// Dependency graph between chunks
+    dependencies: Vec<ChunkDependency>,
+
+    /// Priority queue for exploration
+    exploration_queue: BinaryHeap<ScoredChunk>,
+
+    /// Already explored chunk IDs
+    explored_set: HashSet<String>,
+
+    /// Attention weights for chunks (updated during exploration)
+    attention_weights: HashMap<String, f32>,
+
+    /// Sliding context window for efficient token management
+    context_window: ContextWindow,
+}
+
+/// Sliding context window for managing token budgets
+#[derive(Debug, Clone)]
+pub struct ContextWindow {
+    /// Maximum tokens in the window
+    pub max_tokens: u32,
+    /// Current tokens used
+    pub current_tokens: u32,
+    /// Chunks currently in window (ordered by recency)
+    pub active_chunks: VecDeque<String>,
+    /// Overlap percentage for sliding (0-1)
+    pub overlap_ratio: f32,
+}
+
+impl Default for ContextWindow {
+    fn default() -> Self {
+        Self {
+            max_tokens: 100_000,
+            current_tokens: 0,
+            active_chunks: VecDeque::new(),
+            overlap_ratio: 0.2,
+        }
+    }
+}
+
+impl ContextWindow {
+    /// Create a new context window with specified max tokens
+    pub fn new(max_tokens: u32) -> Self {
+        Self {
+            max_tokens,
+            ..Default::default()
+        }
+    }
+
+    /// Check if a chunk can fit in the window
+    pub fn can_fit(&self, tokens: u32) -> bool {
+        self.current_tokens + tokens <= self.max_tokens
+    }
+
+    /// Available space in tokens
+    pub fn available(&self) -> u32 {
+        self.max_tokens.saturating_sub(self.current_tokens)
+    }
+
+    /// Add a chunk to the window, evicting old chunks if needed
+    pub fn add_chunk(&mut self, chunk_id: String, tokens: u32, chunks: &HashMap<String, Chunk>) {
+        // Evict old chunks if needed
+        while !self.can_fit(tokens) && !self.active_chunks.is_empty() {
+            if let Some(old_id) = self.active_chunks.pop_front() {
+                if let Some(old_chunk) = chunks.get(&old_id) {
+                    // Keep overlap portion
+                    let evict_tokens = (old_chunk.token_count as f32 * (1.0 - self.overlap_ratio)) as u32;
+                    self.current_tokens = self.current_tokens.saturating_sub(evict_tokens);
+                }
+            }
+        }
+
+        self.active_chunks.push_back(chunk_id);
+        self.current_tokens += tokens;
+    }
+
+    /// Get chunks currently in the window
+    pub fn get_active_chunks(&self) -> &VecDeque<String> {
+        &self.active_chunks
+    }
+
+    /// Clear the window
+    pub fn clear(&mut self) {
+        self.active_chunks.clear();
+        self.current_tokens = 0;
+    }
 }
 
 impl fmt::Debug for RlmContext {
@@ -40,6 +212,9 @@ impl fmt::Debug for RlmContext {
             .field("source_path", &self.source_path)
             .field("chunker", &"<ContextChunker>")
             .field("config", &self.config)
+            .field("clusters", &self.clusters.len())
+            .field("dependencies", &self.dependencies.len())
+            .field("explored", &self.explored_set.len())
             .finish()
     }
 }
@@ -47,6 +222,7 @@ impl fmt::Debug for RlmContext {
 impl RlmContext {
     /// Create a new empty context
     pub fn new(config: RlmConfig) -> Self {
+        let context_window = ContextWindow::new(config.max_total_tokens);
         Self {
             chunks: HashMap::new(),
             root_chunks: Vec::new(),
@@ -54,6 +230,12 @@ impl RlmContext {
             source_path: None,
             chunker: Box::new(DefaultChunker::default()),
             config,
+            clusters: Vec::new(),
+            dependencies: Vec::new(),
+            exploration_queue: BinaryHeap::new(),
+            explored_set: HashSet::new(),
+            attention_weights: HashMap::new(),
+            context_window,
         }
     }
 

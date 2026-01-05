@@ -2,6 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use std::sync::Arc;
 
 /// Configuration for RLM execution
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -312,6 +313,636 @@ pub fn estimate_tokens(text: &str) -> u32 {
     (text.len() / 4) as u32
 }
 
+// ============================================================================
+// PreToolUse Hook System
+// ============================================================================
+
+/// Event types for PreToolUse hooks
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum RlmToolEvent {
+    /// Navigation decision being made
+    NavigationStart {
+        query: String,
+        chunk_count: usize,
+        depth: u32,
+    },
+    /// Chunk exploration starting
+    ChunkExploreStart { chunk_id: String, query: String },
+    /// Cache lookup
+    CacheLookup {
+        cache_type: String,
+        key: String,
+        hit: bool,
+    },
+    /// Aggregation starting
+    AggregationStart {
+        finding_count: usize,
+        strategy: String,
+    },
+    /// LLM call being made
+    LlmCall {
+        model: String,
+        purpose: String,
+        token_estimate: u32,
+    },
+    /// Daemon query received
+    DaemonQueryReceived { query_id: String, query: String },
+    /// Creative pipeline stage execution
+    CreativePipelineStage {
+        stage: PipelineStage,
+        agent_name: String,
+        domain: CreativeDomain,
+    },
+}
+
+/// Result of a hook invocation
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HookResult {
+    /// Whether to proceed with the tool use
+    pub proceed: bool,
+    /// Optional message from the hook
+    pub message: Option<String>,
+    /// Modified parameters (if hook transformed input)
+    pub modified_params: Option<serde_json::Value>,
+}
+
+impl Default for HookResult {
+    fn default() -> Self {
+        Self {
+            proceed: true,
+            message: None,
+            modified_params: None,
+        }
+    }
+}
+
+/// Trait for PreToolUse hooks
+pub trait PreToolUseHook: Send + Sync {
+    /// Called before a tool is used
+    fn on_pre_tool_use(&self, event: &RlmToolEvent) -> HookResult;
+
+    /// Hook name for logging
+    fn name(&self) -> &str;
+}
+
+/// A logging hook that records all tool events
+pub struct LoggingHook {
+    name: String,
+    log_level: LogLevel,
+}
+
+/// Log level for the logging hook
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum LogLevel {
+    /// Debug level (most verbose)
+    Debug,
+    /// Info level (default)
+    #[default]
+    Info,
+    /// Warn level
+    Warn,
+    /// Error level (least verbose)
+    Error,
+}
+
+impl LoggingHook {
+    /// Create a new logging hook
+    pub fn new(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            log_level: LogLevel::Info,
+        }
+    }
+
+    /// Set the log level
+    pub fn with_level(mut self, level: LogLevel) -> Self {
+        self.log_level = level;
+        self
+    }
+}
+
+impl PreToolUseHook for LoggingHook {
+    fn on_pre_tool_use(&self, event: &RlmToolEvent) -> HookResult {
+        match self.log_level {
+            LogLevel::Debug => {
+                tracing::debug!(hook = %self.name, event = ?event, "PreToolUse hook triggered");
+            }
+            LogLevel::Info => {
+                tracing::info!(hook = %self.name, event = ?event, "PreToolUse hook triggered");
+            }
+            LogLevel::Warn => {
+                tracing::warn!(hook = %self.name, event = ?event, "PreToolUse hook triggered");
+            }
+            LogLevel::Error => {
+                tracing::error!(hook = %self.name, event = ?event, "PreToolUse hook triggered");
+            }
+        }
+        HookResult::default()
+    }
+
+    fn name(&self) -> &str {
+        &self.name
+    }
+}
+
+/// Registry for managing PreToolUse hooks
+#[derive(Default)]
+pub struct HookRegistry {
+    hooks: Vec<Arc<dyn PreToolUseHook>>,
+}
+
+impl HookRegistry {
+    /// Create a new empty registry
+    pub fn new() -> Self {
+        Self { hooks: Vec::new() }
+    }
+
+    /// Register a hook
+    pub fn register(&mut self, hook: Arc<dyn PreToolUseHook>) {
+        tracing::debug!(hook_name = %hook.name(), "Registering PreToolUse hook");
+        self.hooks.push(hook);
+    }
+
+    /// Invoke all hooks for an event
+    pub fn invoke(&self, event: &RlmToolEvent) -> HookResult {
+        for hook in &self.hooks {
+            let result = hook.on_pre_tool_use(event);
+            if !result.proceed {
+                tracing::warn!(
+                    hook_name = %hook.name(),
+                    message = ?result.message,
+                    "Hook blocked tool use"
+                );
+                return result;
+            }
+        }
+        HookResult::default()
+    }
+
+    /// Check if any hooks are registered
+    pub fn has_hooks(&self) -> bool {
+        !self.hooks.is_empty()
+    }
+
+    /// Get the number of registered hooks
+    pub fn hook_count(&self) -> usize {
+        self.hooks.len()
+    }
+
+    /// Clear all hooks
+    pub fn clear(&mut self) {
+        self.hooks.clear();
+    }
+}
+
+/// Configuration for hook behavior
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HookConfig {
+    /// Whether hooks are enabled
+    pub enabled: bool,
+    /// Log level for built-in logging hook
+    pub log_level: LogLevel,
+    /// Whether to include timing information
+    pub include_timing: bool,
+    /// Whether to log cache hits/misses
+    pub log_cache_events: bool,
+    /// Whether to log LLM calls
+    pub log_llm_calls: bool,
+    /// Whether to log navigation decisions
+    pub log_navigation: bool,
+}
+
+impl Default for HookConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            log_level: LogLevel::Info,
+            include_timing: true,
+            log_cache_events: true,
+            log_llm_calls: true,
+            log_navigation: true,
+        }
+    }
+}
+
+// ============================================================================
+// Capability Integration Types
+// ============================================================================
+
+/// Types of capabilities that can be integrated with RLM
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum RlmCapabilityType {
+    /// MCP server for external API integration
+    McpServer {
+        name: String,
+        api_type: String,
+        description: String,
+    },
+    /// Skill for reusable patterns (e.g., migrations)
+    Skill {
+        name: String,
+        trigger: String,
+        purpose: String,
+    },
+    /// Agent for specialized behaviors (e.g., security review)
+    Agent {
+        name: String,
+        specialization: String,
+    },
+    /// Creative pipeline agent for content generation workflows
+    CreativePipelineAgent {
+        name: String,
+        /// The creative domain (video, image, audio, text, 3d)
+        domain: CreativeDomain,
+        /// Pipeline stage this agent handles
+        stage: PipelineStage,
+        /// Required tools/MCPs for this agent
+        required_tools: Vec<String>,
+        /// Description of capabilities
+        description: String,
+    },
+}
+
+/// Creative domains supported by pipeline agents
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CreativeDomain {
+    /// Video generation and editing (Veo, ffmpeg)
+    Video,
+    /// Image generation and manipulation (Gemini, DALL-E)
+    Image,
+    /// Audio generation and processing
+    Audio,
+    /// Text and document generation
+    Text,
+    /// 3D model and scene generation (Three.js)
+    ThreeD,
+    /// Multi-modal combining multiple domains
+    MultiModal,
+}
+
+/// Stages in a creative pipeline
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PipelineStage {
+    /// Initial ideation and concept generation
+    Ideation,
+    /// Prompt engineering and refinement
+    PromptEngineering,
+    /// Content generation (calling AI APIs)
+    Generation,
+    /// Post-processing and enhancement
+    PostProcessing,
+    /// Quality review and iteration
+    QualityReview,
+    /// Final assembly and export
+    Assembly,
+    /// Distribution and publishing
+    Distribution,
+}
+
+impl RlmCapabilityType {
+    /// Create a new MCP server capability
+    pub fn mcp_server(
+        name: impl Into<String>,
+        api_type: impl Into<String>,
+        description: impl Into<String>,
+    ) -> Self {
+        RlmCapabilityType::McpServer {
+            name: name.into(),
+            api_type: api_type.into(),
+            description: description.into(),
+        }
+    }
+
+    /// Create a new Skill capability
+    pub fn skill(
+        name: impl Into<String>,
+        trigger: impl Into<String>,
+        purpose: impl Into<String>,
+    ) -> Self {
+        RlmCapabilityType::Skill {
+            name: name.into(),
+            trigger: trigger.into(),
+            purpose: purpose.into(),
+        }
+    }
+
+    /// Create a new Agent capability
+    pub fn agent(name: impl Into<String>, specialization: impl Into<String>) -> Self {
+        RlmCapabilityType::Agent {
+            name: name.into(),
+            specialization: specialization.into(),
+        }
+    }
+
+    /// Create a new Creative Pipeline Agent capability
+    pub fn creative_agent(
+        name: impl Into<String>,
+        domain: CreativeDomain,
+        stage: PipelineStage,
+        required_tools: Vec<String>,
+        description: impl Into<String>,
+    ) -> Self {
+        RlmCapabilityType::CreativePipelineAgent {
+            name: name.into(),
+            domain,
+            stage,
+            required_tools,
+            description: description.into(),
+        }
+    }
+
+    /// Get the capability name
+    pub fn name(&self) -> &str {
+        match self {
+            RlmCapabilityType::McpServer { name, .. } => name,
+            RlmCapabilityType::Skill { name, .. } => name,
+            RlmCapabilityType::Agent { name, .. } => name,
+            RlmCapabilityType::CreativePipelineAgent { name, .. } => name,
+        }
+    }
+
+    /// Check if this is a creative pipeline capability
+    pub fn is_creative_pipeline(&self) -> bool {
+        matches!(self, RlmCapabilityType::CreativePipelineAgent { .. })
+    }
+
+    /// Get the creative domain if this is a creative pipeline agent
+    pub fn creative_domain(&self) -> Option<CreativeDomain> {
+        match self {
+            RlmCapabilityType::CreativePipelineAgent { domain, .. } => Some(*domain),
+            _ => None,
+        }
+    }
+
+    /// Get the pipeline stage if this is a creative pipeline agent
+    pub fn pipeline_stage(&self) -> Option<PipelineStage> {
+        match self {
+            RlmCapabilityType::CreativePipelineAgent { stage, .. } => Some(*stage),
+            _ => None,
+        }
+    }
+}
+
+impl CreativeDomain {
+    /// Get the display name for this domain
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            CreativeDomain::Video => "Video",
+            CreativeDomain::Image => "Image",
+            CreativeDomain::Audio => "Audio",
+            CreativeDomain::Text => "Text",
+            CreativeDomain::ThreeD => "3D",
+            CreativeDomain::MultiModal => "Multi-Modal",
+        }
+    }
+
+    /// Get recommended MCP tools for this domain
+    pub fn recommended_tools(&self) -> Vec<&'static str> {
+        match self {
+            CreativeDomain::Video => vec!["veo", "ffmpeg", "gemini"],
+            CreativeDomain::Image => vec!["gemini", "dall-e", "stable-diffusion"],
+            CreativeDomain::Audio => vec!["elevenlabs", "speechify", "ffmpeg"],
+            CreativeDomain::Text => vec!["anthropic", "gemini", "openai"],
+            CreativeDomain::ThreeD => vec!["threejs-dev", "blender-mcp"],
+            CreativeDomain::MultiModal => vec!["gemini", "veo", "anthropic"],
+        }
+    }
+}
+
+impl PipelineStage {
+    /// Get the display name for this stage
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            PipelineStage::Ideation => "Ideation",
+            PipelineStage::PromptEngineering => "Prompt Engineering",
+            PipelineStage::Generation => "Generation",
+            PipelineStage::PostProcessing => "Post-Processing",
+            PipelineStage::QualityReview => "Quality Review",
+            PipelineStage::Assembly => "Assembly",
+            PipelineStage::Distribution => "Distribution",
+        }
+    }
+
+    /// Get the typical next stage in the pipeline
+    pub fn next_stage(&self) -> Option<PipelineStage> {
+        match self {
+            PipelineStage::Ideation => Some(PipelineStage::PromptEngineering),
+            PipelineStage::PromptEngineering => Some(PipelineStage::Generation),
+            PipelineStage::Generation => Some(PipelineStage::PostProcessing),
+            PipelineStage::PostProcessing => Some(PipelineStage::QualityReview),
+            PipelineStage::QualityReview => Some(PipelineStage::Assembly),
+            PipelineStage::Assembly => Some(PipelineStage::Distribution),
+            PipelineStage::Distribution => None,
+        }
+    }
+
+    /// Check if this is a terminal stage
+    pub fn is_terminal(&self) -> bool {
+        matches!(self, PipelineStage::Distribution)
+    }
+}
+
+/// Registry of capabilities available to RLM
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct RlmCapabilityRegistry {
+    /// Registered capabilities
+    pub capabilities: Vec<RlmCapabilityType>,
+}
+
+impl RlmCapabilityRegistry {
+    /// Create a new empty registry
+    pub fn new() -> Self {
+        Self {
+            capabilities: Vec::new(),
+        }
+    }
+
+    /// Register a capability
+    pub fn register(&mut self, capability: RlmCapabilityType) {
+        tracing::info!(capability_name = %capability.name(), "Registering RLM capability");
+        self.capabilities.push(capability);
+    }
+
+    /// Get all MCP servers
+    pub fn mcp_servers(&self) -> impl Iterator<Item = &RlmCapabilityType> {
+        self.capabilities
+            .iter()
+            .filter(|c| matches!(c, RlmCapabilityType::McpServer { .. }))
+    }
+
+    /// Get all skills
+    pub fn skills(&self) -> impl Iterator<Item = &RlmCapabilityType> {
+        self.capabilities
+            .iter()
+            .filter(|c| matches!(c, RlmCapabilityType::Skill { .. }))
+    }
+
+    /// Get all agents
+    pub fn agents(&self) -> impl Iterator<Item = &RlmCapabilityType> {
+        self.capabilities
+            .iter()
+            .filter(|c| matches!(c, RlmCapabilityType::Agent { .. }))
+    }
+
+    /// Get all creative pipeline agents
+    pub fn creative_pipeline_agents(&self) -> impl Iterator<Item = &RlmCapabilityType> {
+        self.capabilities
+            .iter()
+            .filter(|c| matches!(c, RlmCapabilityType::CreativePipelineAgent { .. }))
+    }
+
+    /// Get creative pipeline agents by domain
+    pub fn agents_for_domain(&self, domain: CreativeDomain) -> Vec<&RlmCapabilityType> {
+        self.capabilities
+            .iter()
+            .filter(|c| c.creative_domain() == Some(domain))
+            .collect()
+    }
+
+    /// Get creative pipeline agents by stage
+    pub fn agents_for_stage(&self, stage: PipelineStage) -> Vec<&RlmCapabilityType> {
+        self.capabilities
+            .iter()
+            .filter(|c| c.pipeline_stage() == Some(stage))
+            .collect()
+    }
+
+    /// Check if a capability exists by name
+    pub fn has_capability(&self, name: &str) -> bool {
+        self.capabilities.iter().any(|c| c.name() == name)
+    }
+
+    /// Create a registry with common capabilities pre-registered
+    pub fn with_defaults() -> Self {
+        let mut registry = Self::new();
+
+        // Register common MCP servers
+        registry.register(RlmCapabilityType::mcp_server(
+            "external-api-mcp",
+            "rest",
+            "MCP server for external REST API integration",
+        ));
+
+        // Register common skills
+        registry.register(RlmCapabilityType::skill(
+            "schema-migration",
+            "migrate",
+            "Skill for database schema migrations",
+        ));
+
+        // Register common agents
+        registry.register(RlmCapabilityType::agent(
+            "security-reviewer",
+            "Security code review and vulnerability analysis",
+        ));
+
+        registry
+    }
+
+    /// Create a registry with creative pipeline agents pre-registered
+    pub fn with_creative_pipeline_defaults() -> Self {
+        let mut registry = Self::with_defaults();
+
+        // Video generation agents
+        registry.register(RlmCapabilityType::creative_agent(
+            "video-ideation-agent",
+            CreativeDomain::Video,
+            PipelineStage::Ideation,
+            vec!["anthropic".to_string(), "gemini".to_string()],
+            "Generates video concepts, storyboards, and creative briefs",
+        ));
+        registry.register(RlmCapabilityType::creative_agent(
+            "video-prompt-engineer",
+            CreativeDomain::Video,
+            PipelineStage::PromptEngineering,
+            vec!["anthropic".to_string()],
+            "Crafts optimized prompts for Veo and video generation models",
+        ));
+        registry.register(RlmCapabilityType::creative_agent(
+            "video-generator",
+            CreativeDomain::Video,
+            PipelineStage::Generation,
+            vec!["veo".to_string()],
+            "Generates videos using Veo 3.1 API",
+        ));
+        registry.register(RlmCapabilityType::creative_agent(
+            "video-post-processor",
+            CreativeDomain::Video,
+            PipelineStage::PostProcessing,
+            vec!["ffmpeg".to_string()],
+            "Handles video encoding, trimming, effects, and format conversion",
+        ));
+
+        // Image generation agents
+        registry.register(RlmCapabilityType::creative_agent(
+            "image-ideation-agent",
+            CreativeDomain::Image,
+            PipelineStage::Ideation,
+            vec!["anthropic".to_string()],
+            "Generates image concepts and visual direction",
+        ));
+        registry.register(RlmCapabilityType::creative_agent(
+            "image-generator",
+            CreativeDomain::Image,
+            PipelineStage::Generation,
+            vec!["gemini".to_string()],
+            "Generates images using Gemini or DALL-E",
+        ));
+
+        // 3D generation agents
+        registry.register(RlmCapabilityType::creative_agent(
+            "threejs-scene-agent",
+            CreativeDomain::ThreeD,
+            PipelineStage::Generation,
+            vec!["threejs-dev".to_string()],
+            "Creates Three.js 3D scenes, models, and animations",
+        ));
+
+        // Multi-modal orchestration agent
+        registry.register(RlmCapabilityType::creative_agent(
+            "creative-orchestrator",
+            CreativeDomain::MultiModal,
+            PipelineStage::Assembly,
+            vec!["anthropic".to_string(), "veo".to_string(), "gemini".to_string()],
+            "Orchestrates multi-modal creative workflows across domains",
+        ));
+
+        // Quality review agent
+        registry.register(RlmCapabilityType::creative_agent(
+            "creative-qa-agent",
+            CreativeDomain::MultiModal,
+            PipelineStage::QualityReview,
+            vec!["anthropic".to_string(), "gemini".to_string()],
+            "Reviews generated content for quality, coherence, and brand alignment",
+        ));
+
+        registry
+    }
+
+    /// Get a pipeline of agents for a specific domain (ordered by stage)
+    pub fn get_pipeline_for_domain(&self, domain: CreativeDomain) -> Vec<&RlmCapabilityType> {
+        let stages = [
+            PipelineStage::Ideation,
+            PipelineStage::PromptEngineering,
+            PipelineStage::Generation,
+            PipelineStage::PostProcessing,
+            PipelineStage::QualityReview,
+            PipelineStage::Assembly,
+            PipelineStage::Distribution,
+        ];
+
+        let mut pipeline = Vec::new();
+        for stage in stages {
+            let agents: Vec<_> = self.capabilities
+                .iter()
+                .filter(|c| c.creative_domain() == Some(domain) && c.pipeline_stage() == Some(stage))
+                .collect();
+            pipeline.extend(agents);
+        }
+        pipeline
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -346,7 +977,10 @@ mod tests {
         let json = serde_json::to_string(&config).unwrap();
         let deserialized: RlmConfig = serde_json::from_str(&json).unwrap();
         assert_eq!(config.max_depth, deserialized.max_depth);
-        assert_eq!(config.max_chunks_per_level, deserialized.max_chunks_per_level);
+        assert_eq!(
+            config.max_chunks_per_level,
+            deserialized.max_chunks_per_level
+        );
     }
 
     #[test]
@@ -393,16 +1027,14 @@ mod tests {
 
     #[test]
     fn test_chunk_with_byte_range() {
-        let chunk = Chunk::new("test", "content")
-            .with_byte_range(100, 200);
+        let chunk = Chunk::new("test", "content").with_byte_range(100, 200);
         assert_eq!(chunk.byte_range, Some((100, 200)));
     }
 
     #[test]
     fn test_chunk_with_hints() {
         let hints = vec!["function".to_string(), "authentication".to_string()];
-        let chunk = Chunk::new("test", "content")
-            .with_hints(hints.clone());
+        let chunk = Chunk::new("test", "content").with_hints(hints.clone());
         assert_eq!(chunk.hints, hints);
     }
 
@@ -449,8 +1081,7 @@ mod tests {
 
     #[test]
     fn test_chunk_serialization() {
-        let chunk = Chunk::new("test-chunk", "some content")
-            .with_source(PathBuf::from("test.rs"));
+        let chunk = Chunk::new("test-chunk", "some content").with_source(PathBuf::from("test.rs"));
         let json = serde_json::to_string(&chunk).unwrap();
         let deserialized: Chunk = serde_json::from_str(&json).unwrap();
         assert_eq!(chunk.id, deserialized.id);
@@ -851,5 +1482,311 @@ fn main() {
         let content = "Code: fn foo() {} and text with numbers 12345";
         let tokens = estimate_tokens(content);
         assert!(tokens > 0);
+    }
+
+    // ==================== RlmCapabilityType Tests ====================
+
+    #[test]
+    fn test_capability_type_mcp_server() {
+        let cap = RlmCapabilityType::mcp_server("test-mcp", "rest", "Test MCP server");
+        assert_eq!(cap.name(), "test-mcp");
+        match cap {
+            RlmCapabilityType::McpServer {
+                api_type,
+                description,
+                ..
+            } => {
+                assert_eq!(api_type, "rest");
+                assert_eq!(description, "Test MCP server");
+            }
+            _ => panic!("Expected McpServer variant"),
+        }
+    }
+
+    #[test]
+    fn test_capability_type_skill() {
+        let cap = RlmCapabilityType::skill("migration-skill", "migrate", "Database migrations");
+        assert_eq!(cap.name(), "migration-skill");
+        match cap {
+            RlmCapabilityType::Skill {
+                trigger, purpose, ..
+            } => {
+                assert_eq!(trigger, "migrate");
+                assert_eq!(purpose, "Database migrations");
+            }
+            _ => panic!("Expected Skill variant"),
+        }
+    }
+
+    #[test]
+    fn test_capability_type_agent() {
+        let cap = RlmCapabilityType::agent("security-agent", "Security review");
+        assert_eq!(cap.name(), "security-agent");
+        match cap {
+            RlmCapabilityType::Agent { specialization, .. } => {
+                assert_eq!(specialization, "Security review");
+            }
+            _ => panic!("Expected Agent variant"),
+        }
+    }
+
+    #[test]
+    fn test_capability_type_serialization() {
+        let cap = RlmCapabilityType::mcp_server("test", "graphql", "GraphQL API");
+        let json = serde_json::to_string(&cap).unwrap();
+        let deserialized: RlmCapabilityType = serde_json::from_str(&json).unwrap();
+        assert_eq!(cap, deserialized);
+    }
+
+    // ==================== RlmCapabilityRegistry Tests ====================
+
+    #[test]
+    fn test_capability_registry_new() {
+        let registry = RlmCapabilityRegistry::new();
+        assert!(registry.capabilities.is_empty());
+    }
+
+    #[test]
+    fn test_capability_registry_register() {
+        let mut registry = RlmCapabilityRegistry::new();
+        registry.register(RlmCapabilityType::mcp_server("api-mcp", "rest", "REST API"));
+        assert_eq!(registry.capabilities.len(), 1);
+        assert!(registry.has_capability("api-mcp"));
+    }
+
+    #[test]
+    fn test_capability_registry_filters() {
+        let mut registry = RlmCapabilityRegistry::new();
+        registry.register(RlmCapabilityType::mcp_server("mcp1", "rest", "MCP 1"));
+        registry.register(RlmCapabilityType::skill("skill1", "trigger1", "Skill 1"));
+        registry.register(RlmCapabilityType::agent("agent1", "Agent 1"));
+        registry.register(RlmCapabilityType::mcp_server("mcp2", "graphql", "MCP 2"));
+
+        assert_eq!(registry.mcp_servers().count(), 2);
+        assert_eq!(registry.skills().count(), 1);
+        assert_eq!(registry.agents().count(), 1);
+    }
+
+    #[test]
+    fn test_capability_registry_has_capability() {
+        let mut registry = RlmCapabilityRegistry::new();
+        registry.register(RlmCapabilityType::agent("test-agent", "Testing"));
+
+        assert!(registry.has_capability("test-agent"));
+        assert!(!registry.has_capability("nonexistent"));
+    }
+
+    #[test]
+    fn test_capability_registry_with_defaults() {
+        let registry = RlmCapabilityRegistry::with_defaults();
+
+        // Should have default capabilities
+        assert!(registry.has_capability("external-api-mcp"));
+        assert!(registry.has_capability("schema-migration"));
+        assert!(registry.has_capability("security-reviewer"));
+
+        // Check counts
+        assert!(registry.mcp_servers().count() >= 1);
+        assert!(registry.skills().count() >= 1);
+        assert!(registry.agents().count() >= 1);
+    }
+
+    #[test]
+    fn test_capability_registry_serialization() {
+        let registry = RlmCapabilityRegistry::with_defaults();
+        let json = serde_json::to_string(&registry).unwrap();
+        let deserialized: RlmCapabilityRegistry = serde_json::from_str(&json).unwrap();
+        assert_eq!(registry.capabilities.len(), deserialized.capabilities.len());
+    }
+
+    // ==================== Creative Pipeline Tests ====================
+
+    #[test]
+    fn test_creative_domain_display_names() {
+        assert_eq!(CreativeDomain::Video.display_name(), "Video");
+        assert_eq!(CreativeDomain::Image.display_name(), "Image");
+        assert_eq!(CreativeDomain::Audio.display_name(), "Audio");
+        assert_eq!(CreativeDomain::Text.display_name(), "Text");
+        assert_eq!(CreativeDomain::ThreeD.display_name(), "3D");
+        assert_eq!(CreativeDomain::MultiModal.display_name(), "Multi-Modal");
+    }
+
+    #[test]
+    fn test_creative_domain_recommended_tools() {
+        let video_tools = CreativeDomain::Video.recommended_tools();
+        assert!(video_tools.contains(&"veo"));
+        assert!(video_tools.contains(&"ffmpeg"));
+
+        let image_tools = CreativeDomain::Image.recommended_tools();
+        assert!(image_tools.contains(&"gemini"));
+
+        let threed_tools = CreativeDomain::ThreeD.recommended_tools();
+        assert!(threed_tools.contains(&"threejs-dev"));
+    }
+
+    #[test]
+    fn test_pipeline_stage_display_names() {
+        assert_eq!(PipelineStage::Ideation.display_name(), "Ideation");
+        assert_eq!(PipelineStage::PromptEngineering.display_name(), "Prompt Engineering");
+        assert_eq!(PipelineStage::Generation.display_name(), "Generation");
+        assert_eq!(PipelineStage::PostProcessing.display_name(), "Post-Processing");
+        assert_eq!(PipelineStage::QualityReview.display_name(), "Quality Review");
+        assert_eq!(PipelineStage::Assembly.display_name(), "Assembly");
+        assert_eq!(PipelineStage::Distribution.display_name(), "Distribution");
+    }
+
+    #[test]
+    fn test_pipeline_stage_next_stage() {
+        assert_eq!(PipelineStage::Ideation.next_stage(), Some(PipelineStage::PromptEngineering));
+        assert_eq!(PipelineStage::PromptEngineering.next_stage(), Some(PipelineStage::Generation));
+        assert_eq!(PipelineStage::Generation.next_stage(), Some(PipelineStage::PostProcessing));
+        assert_eq!(PipelineStage::PostProcessing.next_stage(), Some(PipelineStage::QualityReview));
+        assert_eq!(PipelineStage::QualityReview.next_stage(), Some(PipelineStage::Assembly));
+        assert_eq!(PipelineStage::Assembly.next_stage(), Some(PipelineStage::Distribution));
+        assert_eq!(PipelineStage::Distribution.next_stage(), None);
+    }
+
+    #[test]
+    fn test_pipeline_stage_is_terminal() {
+        assert!(!PipelineStage::Ideation.is_terminal());
+        assert!(!PipelineStage::Generation.is_terminal());
+        assert!(PipelineStage::Distribution.is_terminal());
+    }
+
+    #[test]
+    fn test_creative_pipeline_agent_creation() {
+        let agent = RlmCapabilityType::creative_agent(
+            "test-video-agent",
+            CreativeDomain::Video,
+            PipelineStage::Generation,
+            vec!["veo".to_string()],
+            "Generates test videos",
+        );
+
+        assert_eq!(agent.name(), "test-video-agent");
+        assert!(agent.is_creative_pipeline());
+        assert_eq!(agent.creative_domain(), Some(CreativeDomain::Video));
+        assert_eq!(agent.pipeline_stage(), Some(PipelineStage::Generation));
+    }
+
+    #[test]
+    fn test_non_creative_agent_methods() {
+        let regular_agent = RlmCapabilityType::agent("regular", "Regular agent");
+        assert!(!regular_agent.is_creative_pipeline());
+        assert_eq!(regular_agent.creative_domain(), None);
+        assert_eq!(regular_agent.pipeline_stage(), None);
+    }
+
+    #[test]
+    fn test_capability_registry_with_creative_pipeline_defaults() {
+        let registry = RlmCapabilityRegistry::with_creative_pipeline_defaults();
+
+        // Should have creative pipeline agents
+        assert!(registry.has_capability("video-ideation-agent"));
+        assert!(registry.has_capability("video-generator"));
+        assert!(registry.has_capability("image-generator"));
+        assert!(registry.has_capability("threejs-scene-agent"));
+        assert!(registry.has_capability("creative-orchestrator"));
+        assert!(registry.has_capability("creative-qa-agent"));
+
+        // Should still have regular capabilities
+        assert!(registry.has_capability("external-api-mcp"));
+        assert!(registry.has_capability("security-reviewer"));
+    }
+
+    #[test]
+    fn test_capability_registry_creative_pipeline_agents_filter() {
+        let registry = RlmCapabilityRegistry::with_creative_pipeline_defaults();
+        let creative_agents: Vec<_> = registry.creative_pipeline_agents().collect();
+
+        // Should have multiple creative pipeline agents
+        assert!(creative_agents.len() >= 5);
+
+        // All should be creative pipeline agents
+        for agent in creative_agents {
+            assert!(agent.is_creative_pipeline());
+        }
+    }
+
+    #[test]
+    fn test_capability_registry_agents_for_domain() {
+        let registry = RlmCapabilityRegistry::with_creative_pipeline_defaults();
+
+        let video_agents = registry.agents_for_domain(CreativeDomain::Video);
+        assert!(video_agents.len() >= 3); // ideation, prompt eng, generator, post-processor
+
+        let image_agents = registry.agents_for_domain(CreativeDomain::Image);
+        assert!(image_agents.len() >= 1);
+
+        let threed_agents = registry.agents_for_domain(CreativeDomain::ThreeD);
+        assert!(threed_agents.len() >= 1);
+    }
+
+    #[test]
+    fn test_capability_registry_agents_for_stage() {
+        let registry = RlmCapabilityRegistry::with_creative_pipeline_defaults();
+
+        let ideation_agents = registry.agents_for_stage(PipelineStage::Ideation);
+        assert!(ideation_agents.len() >= 1);
+
+        let generation_agents = registry.agents_for_stage(PipelineStage::Generation);
+        assert!(generation_agents.len() >= 2); // video-generator, image-generator, threejs
+
+        let qa_agents = registry.agents_for_stage(PipelineStage::QualityReview);
+        assert!(qa_agents.len() >= 1);
+    }
+
+    #[test]
+    fn test_get_pipeline_for_domain() {
+        let registry = RlmCapabilityRegistry::with_creative_pipeline_defaults();
+
+        let video_pipeline = registry.get_pipeline_for_domain(CreativeDomain::Video);
+        assert!(!video_pipeline.is_empty());
+
+        // Pipeline should be ordered by stage
+        let mut prev_stage: Option<PipelineStage> = None;
+        for agent in video_pipeline {
+            if let Some(stage) = agent.pipeline_stage() {
+                if let Some(prev) = prev_stage {
+                    // Current stage should be >= previous stage in order
+                    assert!(stage as u8 >= prev as u8, "Pipeline should be ordered by stage");
+                }
+                prev_stage = Some(stage);
+            }
+        }
+    }
+
+    #[test]
+    fn test_creative_domain_serialization() {
+        let domain = CreativeDomain::Video;
+        let json = serde_json::to_string(&domain).unwrap();
+        let deserialized: CreativeDomain = serde_json::from_str(&json).unwrap();
+        assert_eq!(domain, deserialized);
+    }
+
+    #[test]
+    fn test_pipeline_stage_serialization() {
+        let stage = PipelineStage::Generation;
+        let json = serde_json::to_string(&stage).unwrap();
+        let deserialized: PipelineStage = serde_json::from_str(&json).unwrap();
+        assert_eq!(stage, deserialized);
+    }
+
+    #[test]
+    fn test_creative_pipeline_agent_serialization() {
+        let agent = RlmCapabilityType::creative_agent(
+            "test-agent",
+            CreativeDomain::MultiModal,
+            PipelineStage::Assembly,
+            vec!["tool1".to_string(), "tool2".to_string()],
+            "Test multi-modal agent",
+        );
+
+        let json = serde_json::to_string(&agent).unwrap();
+        let deserialized: RlmCapabilityType = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(agent.name(), deserialized.name());
+        assert_eq!(agent.creative_domain(), deserialized.creative_domain());
+        assert_eq!(agent.pipeline_stage(), deserialized.pipeline_stage());
     }
 }

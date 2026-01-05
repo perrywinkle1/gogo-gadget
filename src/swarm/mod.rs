@@ -14,7 +14,7 @@ mod decomposer;
 mod executor;
 
 pub use coordinator::SwarmCoordinator;
-pub use decomposer::TaskDecomposer;
+pub use decomposer::{FocusArea, TaskDecomposer};
 pub use executor::SwarmExecutor;
 
 use crate::{AntiLazinessConfig, CompressedResult, ContextPolicy, SubagentOutputFormat, TaskResult};

@@ -4,12 +4,18 @@
 
 use crate::rlm::chunker::ChunkStrategy;
 use crate::rlm::context::RlmContext;
-use crate::rlm::navigator::{ChunkSummary, ExploredSummary, NavigationContext, NavigationEngine, Navigator};
-use crate::rlm::types::{Chunk, ChunkResult, Evidence, Finding, FindingType, RlmConfig, RlmResult};
+use crate::rlm::navigator::{
+    ChunkSummary, ExploredSummary, NavigationContext, NavigationEngine, Navigator,
+};
+use crate::rlm::types::{
+    Chunk, ChunkResult, Evidence, Finding, FindingType, HookRegistry, RlmCapabilityRegistry,
+    RlmConfig, RlmResult, RlmToolEvent,
+};
 use anyhow::{Context, Result};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::Arc;
 use std::time::Instant;
 use tracing::{debug, info, warn};
 
@@ -29,6 +35,12 @@ pub struct RlmExecutor {
 
     /// All chunk results collected during exploration
     results: Vec<ChunkResult>,
+
+    /// PreToolUse hook registry for logging and interception
+    hook_registry: Arc<HookRegistry>,
+
+    /// Capability registry for MCP servers, skills, and agents
+    capability_registry: Arc<RlmCapabilityRegistry>,
 }
 
 impl RlmExecutor {
@@ -42,6 +54,8 @@ impl RlmExecutor {
             working_dir,
             explored: HashSet::new(),
             results: Vec::new(),
+            hook_registry: Arc::new(HookRegistry::new()),
+            capability_registry: Arc::new(RlmCapabilityRegistry::new()),
         }
     }
 
@@ -57,7 +71,45 @@ impl RlmExecutor {
             working_dir,
             explored: HashSet::new(),
             results: Vec::new(),
+            hook_registry: Arc::new(HookRegistry::new()),
+            capability_registry: Arc::new(RlmCapabilityRegistry::new()),
         }
+    }
+
+    /// Create executor with hooks and capabilities
+    pub fn with_registries(
+        config: RlmConfig,
+        working_dir: PathBuf,
+        hook_registry: Arc<HookRegistry>,
+        capability_registry: Arc<RlmCapabilityRegistry>,
+    ) -> Self {
+        let navigator = Box::new(Navigator::new(working_dir.clone(), &config));
+
+        Self {
+            config,
+            navigator,
+            working_dir,
+            explored: HashSet::new(),
+            results: Vec::new(),
+            hook_registry,
+            capability_registry,
+        }
+    }
+
+    /// Get the hook registry
+    pub fn hook_registry(&self) -> &Arc<HookRegistry> {
+        &self.hook_registry
+    }
+
+    /// Get the capability registry
+    pub fn capability_registry(&self) -> &Arc<RlmCapabilityRegistry> {
+        &self.capability_registry
+    }
+
+    /// Invoke hooks for a tool event
+    fn invoke_hooks(&self, event: &RlmToolEvent) -> bool {
+        let result = self.hook_registry.invoke(event);
+        result.proceed
     }
 
     /// Execute an RLM query on a file or directory
@@ -196,6 +248,17 @@ impl RlmExecutor {
             return Ok(());
         }
 
+        // Invoke PreToolUse hook for navigation
+        let nav_event = RlmToolEvent::NavigationStart {
+            query: query.to_string(),
+            chunk_count: available.len(),
+            depth,
+        };
+        if !self.invoke_hooks(&nav_event) {
+            debug!("Navigation blocked by hook at depth {}", depth);
+            return Ok(());
+        }
+
         // Get explored summaries for context
         let explored_summaries: Vec<ExploredSummary> = self
             .results
@@ -269,6 +332,24 @@ impl RlmExecutor {
     ) -> Result<ChunkResult> {
         debug!("Exploring chunk {} at depth {}", chunk.id, depth);
 
+        // Invoke PreToolUse hook for chunk exploration
+        let explore_event = RlmToolEvent::ChunkExploreStart {
+            chunk_id: chunk.id.clone(),
+            query: query.to_string(),
+        };
+        if !self.invoke_hooks(&explore_event) {
+            debug!("Chunk exploration blocked by hook: {}", chunk.id);
+            return Ok(ChunkResult {
+                chunk_id: chunk.id.clone(),
+                success: false,
+                findings: vec![],
+                sub_results: vec![],
+                depth,
+                tokens_used: 0,
+                error: Some("Blocked by PreToolUse hook".to_string()),
+            });
+        }
+
         // If chunk is small enough, query it directly
         if chunk.token_count <= 4000 {
             return self.query_chunk(query, chunk, depth);
@@ -338,6 +419,29 @@ Respond with JSON only:
 If not relevant, set "relevant": false and "findings": []."#,
             query, source_display, chunk.content
         );
+
+        // Invoke PreToolUse hook for LLM call
+        let llm_event = RlmToolEvent::LlmCall {
+            model: self
+                .config
+                .explorer_model
+                .clone()
+                .unwrap_or_else(|| "claude".to_string()),
+            purpose: "chunk_exploration".to_string(),
+            token_estimate: chunk.token_count,
+        };
+        if !self.invoke_hooks(&llm_event) {
+            debug!("LLM call blocked by hook for chunk {}", chunk.id);
+            return Ok(ChunkResult {
+                chunk_id: chunk.id.clone(),
+                success: false,
+                findings: vec![],
+                sub_results: vec![],
+                depth,
+                tokens_used: 0,
+                error: Some("LLM call blocked by PreToolUse hook".to_string()),
+            });
+        }
 
         let output = Command::new("claude")
             .args(["--print", "-p", &prompt])
@@ -500,7 +604,10 @@ If not relevant, set "relevant": false and "findings": []."#,
             .collect();
 
         let answer = if answers.is_empty() {
-            sorted.first().map(|f| f.content.clone()).unwrap_or_default()
+            sorted
+                .first()
+                .map(|f| f.content.clone())
+                .unwrap_or_default()
         } else {
             answers
                 .iter()
@@ -553,6 +660,383 @@ If not relevant, set "relevant": false and "findings": []."#,
     pub fn results(&self) -> &[ChunkResult] {
         &self.results
     }
+
+    // ========================================================================
+    // Creative Pipeline Execution Methods
+    // ========================================================================
+
+    /// Execute a creative pipeline for a specific domain
+    ///
+    /// This method orchestrates the execution of creative pipeline agents
+    /// in the correct stage order for the specified domain.
+    pub fn execute_creative_pipeline(
+        &mut self,
+        domain: crate::rlm::types::CreativeDomain,
+        brief: &str,
+        context_path: Option<&Path>,
+    ) -> Result<CreativePipelineResult> {
+        use crate::rlm::types::{CreativeDomain, PipelineStage, RlmCapabilityRegistry};
+
+        let start = std::time::Instant::now();
+
+        info!(
+            "Starting creative pipeline for domain: {} with brief: {}",
+            domain.display_name(),
+            brief.chars().take(100).collect::<String>()
+        );
+
+        // Get the pipeline of agents for this domain
+        let registry = RlmCapabilityRegistry::with_creative_pipeline_defaults();
+        let pipeline = registry.get_pipeline_for_domain(domain);
+
+        if pipeline.is_empty() {
+            return Err(anyhow::anyhow!(
+                "No creative pipeline agents found for domain: {}",
+                domain.display_name()
+            ));
+        }
+
+        let mut stage_results = Vec::new();
+        let mut current_context = brief.to_string();
+        let mut artifacts: Vec<CreativeArtifact> = Vec::new();
+
+        // Execute each stage in order
+        for agent_cap in pipeline {
+            if let crate::rlm::types::RlmCapabilityType::CreativePipelineAgent {
+                name,
+                stage,
+                required_tools,
+                description,
+                ..
+            } = agent_cap
+            {
+                debug!(
+                    "Executing pipeline stage: {} with agent: {}",
+                    stage.display_name(),
+                    name
+                );
+
+                // Invoke hook for stage start
+                let stage_event = RlmToolEvent::CreativePipelineStage {
+                    stage: *stage,
+                    agent_name: name.clone(),
+                    domain,
+                };
+                if !self.invoke_hooks(&stage_event) {
+                    debug!("Pipeline stage blocked by hook: {}", stage.display_name());
+                    continue;
+                }
+
+                // Build prompt for this stage
+                let stage_prompt = self.build_stage_prompt(
+                    *stage,
+                    &current_context,
+                    &artifacts,
+                    required_tools,
+                    description,
+                );
+
+                // Execute the stage
+                let stage_result = self.execute_pipeline_stage(
+                    name,
+                    *stage,
+                    &stage_prompt,
+                    context_path,
+                )?;
+
+                // Update context for next stage
+                if let Some(ref output) = stage_result.output {
+                    current_context = output.clone();
+                }
+
+                // Collect artifacts
+                artifacts.extend(stage_result.artifacts.clone());
+                stage_results.push(stage_result);
+
+                // Check for early termination
+                if stage.is_terminal() {
+                    break;
+                }
+            }
+        }
+
+        let duration_ms = start.elapsed().as_millis() as u64;
+
+        Ok(CreativePipelineResult {
+            domain,
+            brief: brief.to_string(),
+            stage_results,
+            artifacts,
+            total_duration_ms: duration_ms,
+            success: true,
+            error: None,
+        })
+    }
+
+    /// Build a prompt for a specific pipeline stage
+    fn build_stage_prompt(
+        &self,
+        stage: crate::rlm::types::PipelineStage,
+        context: &str,
+        artifacts: &[CreativeArtifact],
+        required_tools: &[String],
+        description: &str,
+    ) -> String {
+        use crate::rlm::types::PipelineStage;
+
+        let tools_section = if required_tools.is_empty() {
+            String::new()
+        } else {
+            format!("\n\nAVAILABLE TOOLS: {}", required_tools.join(", "))
+        };
+
+        let artifacts_section = if artifacts.is_empty() {
+            String::new()
+        } else {
+            let artifact_list: Vec<String> = artifacts
+                .iter()
+                .map(|a| format!("- {} ({}): {}", a.name, a.artifact_type, a.description))
+                .collect();
+            format!("\n\nPREVIOUS ARTIFACTS:\n{}", artifact_list.join("\n"))
+        };
+
+        match stage {
+            PipelineStage::Ideation => format!(
+                r#"STAGE: Ideation
+ROLE: {}
+CONTEXT: {}
+{}{}
+Generate creative concepts, themes, and initial direction.
+Output format: JSON with "concepts", "themes", "direction", "next_steps""#,
+                description, context, tools_section, artifacts_section
+            ),
+            PipelineStage::PromptEngineering => format!(
+                r#"STAGE: Prompt Engineering
+ROLE: {}
+CONTEXT: {}
+{}{}
+Create optimized prompts for generative AI models.
+Output format: JSON with "prompts", "model_recommendations", "parameters""#,
+                description, context, tools_section, artifacts_section
+            ),
+            PipelineStage::Generation => format!(
+                r#"STAGE: Generation
+ROLE: {}
+CONTEXT: {}
+{}{}
+Execute content generation using appropriate tools.
+Output format: JSON with "generated_content", "artifacts", "metadata""#,
+                description, context, tools_section, artifacts_section
+            ),
+            PipelineStage::PostProcessing => format!(
+                r#"STAGE: Post-Processing
+ROLE: {}
+CONTEXT: {}
+{}{}
+Apply enhancements, effects, and format conversions.
+Output format: JSON with "processed_artifacts", "transformations_applied""#,
+                description, context, tools_section, artifacts_section
+            ),
+            PipelineStage::QualityReview => format!(
+                r#"STAGE: Quality Review
+ROLE: {}
+CONTEXT: {}
+{}{}
+Review content for quality, coherence, and alignment with brief.
+Output format: JSON with "quality_score", "issues", "recommendations", "approved""#,
+                description, context, tools_section, artifacts_section
+            ),
+            PipelineStage::Assembly => format!(
+                r#"STAGE: Assembly
+ROLE: {}
+CONTEXT: {}
+{}{}
+Combine artifacts into final deliverables.
+Output format: JSON with "final_output", "manifest", "delivery_ready""#,
+                description, context, tools_section, artifacts_section
+            ),
+            PipelineStage::Distribution => format!(
+                r#"STAGE: Distribution
+ROLE: {}
+CONTEXT: {}
+{}{}
+Prepare and distribute final content.
+Output format: JSON with "distribution_channels", "published_urls", "status""#,
+                description, context, tools_section, artifacts_section
+            ),
+        }
+    }
+
+    /// Execute a single pipeline stage
+    fn execute_pipeline_stage(
+        &self,
+        agent_name: &str,
+        stage: crate::rlm::types::PipelineStage,
+        prompt: &str,
+        _context_path: Option<&Path>,
+    ) -> Result<PipelineStageResult> {
+        let start = std::time::Instant::now();
+
+        // Invoke LLM for this stage
+        let llm_event = RlmToolEvent::LlmCall {
+            model: self
+                .config
+                .explorer_model
+                .clone()
+                .unwrap_or_else(|| "claude".to_string()),
+            purpose: format!("creative_pipeline_{}", stage.display_name()),
+            token_estimate: 2000,
+        };
+
+        if !self.invoke_hooks(&llm_event) {
+            return Ok(PipelineStageResult {
+                stage,
+                agent_name: agent_name.to_string(),
+                success: false,
+                output: None,
+                artifacts: vec![],
+                duration_ms: 0,
+                error: Some("Blocked by hook".to_string()),
+            });
+        }
+
+        let output = Command::new("claude")
+            .args(["--print", "-p", prompt])
+            .current_dir(&self.working_dir)
+            .output()
+            .context("Failed to execute claude CLI for pipeline stage")?;
+
+        let duration_ms = start.elapsed().as_millis() as u64;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Ok(PipelineStageResult {
+                stage,
+                agent_name: agent_name.to_string(),
+                success: false,
+                output: None,
+                artifacts: vec![],
+                duration_ms,
+                error: Some(stderr.to_string()),
+            });
+        }
+
+        let response = String::from_utf8_lossy(&output.stdout).to_string();
+        let artifacts = self.extract_artifacts_from_response(&response, stage);
+
+        Ok(PipelineStageResult {
+            stage,
+            agent_name: agent_name.to_string(),
+            success: true,
+            output: Some(response),
+            artifacts,
+            duration_ms,
+            error: None,
+        })
+    }
+
+    /// Extract artifacts from a stage response
+    fn extract_artifacts_from_response(
+        &self,
+        response: &str,
+        stage: crate::rlm::types::PipelineStage,
+    ) -> Vec<CreativeArtifact> {
+        // Try to parse JSON from response
+        let json_str = Self::extract_json(response);
+        if json_str.is_empty() {
+            return vec![];
+        }
+
+        let parsed: serde_json::Value = match serde_json::from_str(json_str) {
+            Ok(v) => v,
+            Err(_) => return vec![],
+        };
+
+        let mut artifacts = Vec::new();
+
+        // Extract artifacts based on stage
+        if let Some(arr) = parsed.get("artifacts").and_then(|v| v.as_array()) {
+            for item in arr {
+                if let (Some(name), Some(artifact_type)) = (
+                    item.get("name").and_then(|v| v.as_str()),
+                    item.get("type").and_then(|v| v.as_str()),
+                ) {
+                    artifacts.push(CreativeArtifact {
+                        name: name.to_string(),
+                        artifact_type: artifact_type.to_string(),
+                        stage,
+                        description: item
+                            .get("description")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string(),
+                        path: item
+                            .get("path")
+                            .and_then(|v| v.as_str())
+                            .map(PathBuf::from),
+                        metadata: serde_json::to_string(item).unwrap_or_default(),
+                    });
+                }
+            }
+        }
+
+        artifacts
+    }
+}
+
+/// Result from a creative pipeline execution
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct CreativePipelineResult {
+    /// The creative domain
+    pub domain: crate::rlm::types::CreativeDomain,
+    /// Original brief/prompt
+    pub brief: String,
+    /// Results from each stage
+    pub stage_results: Vec<PipelineStageResult>,
+    /// All artifacts produced
+    pub artifacts: Vec<CreativeArtifact>,
+    /// Total execution time
+    pub total_duration_ms: u64,
+    /// Overall success
+    pub success: bool,
+    /// Error if failed
+    pub error: Option<String>,
+}
+
+/// Result from a single pipeline stage
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct PipelineStageResult {
+    /// The stage that was executed
+    pub stage: crate::rlm::types::PipelineStage,
+    /// Agent that executed this stage
+    pub agent_name: String,
+    /// Whether the stage succeeded
+    pub success: bool,
+    /// Output from the stage
+    pub output: Option<String>,
+    /// Artifacts produced
+    pub artifacts: Vec<CreativeArtifact>,
+    /// Duration in milliseconds
+    pub duration_ms: u64,
+    /// Error if failed
+    pub error: Option<String>,
+}
+
+/// An artifact produced during creative pipeline execution
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct CreativeArtifact {
+    /// Name of the artifact
+    pub name: String,
+    /// Type of artifact (image, video, prompt, etc.)
+    pub artifact_type: String,
+    /// Stage that produced this artifact
+    pub stage: crate::rlm::types::PipelineStage,
+    /// Description of the artifact
+    pub description: String,
+    /// Path to the artifact if saved to disk
+    pub path: Option<PathBuf>,
+    /// Additional metadata as JSON
+    pub metadata: String,
 }
 
 #[cfg(test)]
@@ -623,8 +1107,7 @@ mod tests {
         let executor = RlmExecutor::new(config, PathBuf::from("."));
 
         let chunk = Chunk::new("test", "content");
-        let response =
-            r#"{"relevant": true, "findings": [{"content": "Found it", "type": "answer", "confidence": 0.9}]}"#;
+        let response = r#"{"relevant": true, "findings": [{"content": "Found it", "type": "answer", "confidence": 0.9}]}"#;
 
         let findings = executor.parse_findings(response, &chunk).unwrap();
         assert_eq!(findings.len(), 1);
@@ -700,9 +1183,7 @@ mod tests {
         let config = RlmConfig::default();
         let executor = RlmExecutor::new(config, PathBuf::from("."));
 
-        let result = executor
-            .aggregate_results("test query", 1000)
-            .unwrap();
+        let result = executor.aggregate_results("test query", 1000).unwrap();
 
         assert!(!result.success);
         assert!(result.answer.contains("No relevant information"));
@@ -796,5 +1277,90 @@ mod tests {
 
         // We can't actually execute without Claude CLI, but we can verify setup
         assert_eq!(executor.chunks_explored(), 0);
+    }
+
+    // ==================== Hook and Capability Tests ====================
+
+    #[test]
+    fn test_executor_hook_registry_default() {
+        let config = RlmConfig::default();
+        let executor = RlmExecutor::new(config, PathBuf::from("."));
+
+        // Default executor should have empty hook registry
+        assert!(!executor.hook_registry().has_hooks());
+        assert_eq!(executor.hook_registry().hook_count(), 0);
+    }
+
+    #[test]
+    fn test_executor_capability_registry_default() {
+        let config = RlmConfig::default();
+        let executor = RlmExecutor::new(config, PathBuf::from("."));
+
+        // Default executor should have empty capability registry
+        assert!(executor.capability_registry().capabilities.is_empty());
+    }
+
+    #[test]
+    fn test_executor_with_registries() {
+        use crate::rlm::types::{LoggingHook, RlmCapabilityType};
+
+        let config = RlmConfig::default();
+
+        let mut hook_registry = HookRegistry::new();
+        hook_registry.register(Arc::new(LoggingHook::new("test-hook")));
+
+        let mut cap_registry = RlmCapabilityRegistry::new();
+        cap_registry.register(RlmCapabilityType::mcp_server(
+            "test-mcp", "rest", "Test MCP",
+        ));
+
+        let executor = RlmExecutor::with_registries(
+            config,
+            PathBuf::from("."),
+            Arc::new(hook_registry),
+            Arc::new(cap_registry),
+        );
+
+        assert!(executor.hook_registry().has_hooks());
+        assert_eq!(executor.hook_registry().hook_count(), 1);
+        assert!(executor.capability_registry().has_capability("test-mcp"));
+    }
+
+    #[test]
+    fn test_executor_invoke_hooks_proceeds() {
+        let config = RlmConfig::default();
+        let executor = RlmExecutor::new(config, PathBuf::from("."));
+
+        // With no hooks, should always proceed
+        let event = RlmToolEvent::NavigationStart {
+            query: "test".to_string(),
+            chunk_count: 5,
+            depth: 0,
+        };
+        assert!(executor.invoke_hooks(&event));
+    }
+
+    #[test]
+    fn test_executor_with_logging_hook() {
+        use crate::rlm::types::LoggingHook;
+
+        let config = RlmConfig::default();
+        let mut hook_registry = HookRegistry::new();
+        hook_registry.register(Arc::new(LoggingHook::new("test-logger")));
+
+        let executor = RlmExecutor::with_registries(
+            config,
+            PathBuf::from("."),
+            Arc::new(hook_registry),
+            Arc::new(RlmCapabilityRegistry::new()),
+        );
+
+        // Logging hook should not block execution
+        let event = RlmToolEvent::LlmCall {
+            model: "test-model".to_string(),
+            purpose: "test".to_string(),
+            token_estimate: 100,
+        };
+        assert!(executor.invoke_hooks(&event));
     }
 }

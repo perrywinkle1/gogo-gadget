@@ -48,11 +48,23 @@ impl TaskDecomposer {
         analysis: &TaskAnalysis,
         config: &SwarmConfig,
     ) -> Vec<Subtask> {
-        let strategy = self.determine_strategy(config.decomposition_strategy, analysis);
+        self.decompose_for_iteration(task, analysis, config, 1)
+    }
+
+    /// Decompose a task into subtasks for a specific iteration
+    /// Iteration number affects focus area evolution (deeper, more refined analysis on later iterations)
+    pub fn decompose_for_iteration(
+        &self,
+        task: &str,
+        analysis: &TaskAnalysis,
+        config: &SwarmConfig,
+        iteration: u32,
+    ) -> Vec<Subtask> {
+        let strategy = self.determine_strategy(task, config.decomposition_strategy, analysis);
 
         info!(
-            "Decomposing task using {:?} strategy for {} agents",
-            strategy, config.agent_count
+            "Decomposing task using {:?} strategy for {} agents (iteration {})",
+            strategy, config.agent_count, iteration
         );
 
         match strategy {
@@ -60,20 +72,25 @@ impl TaskDecomposer {
             DecompositionStrategy::ByComponents => {
                 self.decompose_by_components(task, analysis, config)
             }
-            DecompositionStrategy::ByFocus => self.decompose_by_focus(task, analysis, config),
-            DecompositionStrategy::Custom => self.decompose_by_focus(task, analysis, config),
-            DecompositionStrategy::Auto => self.decompose_by_focus(task, analysis, config),
+            DecompositionStrategy::ByFocus => self.decompose_by_focus_iteration(task, analysis, config, iteration),
+            DecompositionStrategy::Custom => self.decompose_by_focus_iteration(task, analysis, config, iteration),
+            DecompositionStrategy::Auto => self.decompose_by_focus_iteration(task, analysis, config, iteration),
         }
     }
 
     /// Determine the best strategy based on analysis
     fn determine_strategy(
         &self,
+        task: &str,
         requested: DecompositionStrategy,
         analysis: &TaskAnalysis,
     ) -> DecompositionStrategy {
         if requested != DecompositionStrategy::Auto {
             return requested;
+        }
+
+        if task_mentions_web(task) {
+            return DecompositionStrategy::ByComponents;
         }
 
         // Auto-select strategy based on task analysis
@@ -156,7 +173,7 @@ impl TaskDecomposer {
         _analysis: &TaskAnalysis,
         config: &SwarmConfig,
     ) -> Vec<Subtask> {
-        let components = self.detect_project_components();
+        let components = self.detect_project_components(task);
         let agent_count = config.agent_count as usize;
 
         let mut subtasks = Vec::new();
@@ -200,18 +217,30 @@ impl TaskDecomposer {
         analysis: &TaskAnalysis,
         config: &SwarmConfig,
     ) -> Vec<Subtask> {
+        self.decompose_by_focus_iteration(task, analysis, config, 1)
+    }
+
+    /// Decompose by focus areas with iteration-specific evolution
+    fn decompose_by_focus_iteration(
+        &self,
+        task: &str,
+        analysis: &TaskAnalysis,
+        config: &SwarmConfig,
+        iteration: u32,
+    ) -> Vec<Subtask> {
         let agent_count = config.agent_count as usize;
-        let focus_areas = self.generate_focus_areas(analysis, agent_count);
+        let focus_areas = self.generate_focus_areas_for_iteration(analysis, agent_count, iteration);
 
         focus_areas
             .into_iter()
             .enumerate()
             .map(|(i, focus)| {
                 let description = format!(
-                    "{}\n\n**Agent {} Focus**: {}\n{}\n\
+                    "{}\n\n**Agent {} Focus** (Iteration {}): {}\n{}\n\
                      Be thorough in your specific focus area while being aware of the overall task.",
                     task,
                     i + 1,
+                    iteration,
                     focus.name,
                     focus.instructions
                 );
@@ -232,84 +261,94 @@ impl TaskDecomposer {
 
     /// Generate focus areas based on task analysis
     fn generate_focus_areas(&self, analysis: &TaskAnalysis, count: usize) -> Vec<FocusArea> {
+        self.generate_focus_areas_for_iteration(analysis, count, 1)
+    }
+
+    /// Generate evolved focus areas for a specific iteration
+    /// Focus areas evolve across iterations to provide different perspectives
+    pub fn generate_focus_areas_for_iteration(
+        &self,
+        analysis: &TaskAnalysis,
+        count: usize,
+        iteration: u32,
+    ) -> Vec<FocusArea> {
         let mut areas = Vec::new();
 
         // Primary implementation focus
-        areas.push(FocusArea {
-            name: "Core Implementation".to_string(),
-            instructions: "Focus on implementing the main functionality. \
-                          Write clean, working code that accomplishes the primary goal."
-                .to_string(),
-        });
+        areas.push(FocusArea::new(
+            "Core Implementation",
+            "Focus on implementing the main functionality. \
+             Write clean, working code that accomplishes the primary goal.",
+        ));
 
         // Testing focus
         if count > 1 {
-            areas.push(FocusArea {
-                name: "Testing & Verification".to_string(),
-                instructions: "Focus on writing tests and verifying the implementation works. \
-                              Add unit tests, integration tests, and verify edge cases."
-                    .to_string(),
-            });
+            areas.push(FocusArea::new(
+                "Testing & Verification",
+                "Focus on writing tests and verifying the implementation works. \
+                 Add unit tests, integration tests, and verify edge cases.",
+            ));
         }
 
         // Documentation/cleanup focus
         if count > 2 {
-            areas.push(FocusArea {
-                name: "Documentation & Polish".to_string(),
-                instructions: "Focus on documentation, error messages, and code quality. \
-                              Add comments where needed, improve error handling, ensure code is readable."
-                    .to_string(),
-            });
+            areas.push(FocusArea::new(
+                "Documentation & Polish",
+                "Focus on documentation, error messages, and code quality. \
+                 Add comments where needed, improve error handling, ensure code is readable.",
+            ));
         }
 
         // Architecture/design focus
         if count > 3 {
-            areas.push(FocusArea {
-                name: "Architecture & Integration".to_string(),
-                instructions: "Focus on how this fits into the larger codebase. \
-                              Ensure proper integration, check for conflicts with existing code, \
-                              suggest architectural improvements."
-                    .to_string(),
-            });
+            areas.push(FocusArea::new(
+                "Architecture & Integration",
+                "Focus on how this fits into the larger codebase. \
+                 Ensure proper integration, check for conflicts with existing code, \
+                 suggest architectural improvements.",
+            ));
         }
 
         // Performance focus
         if count > 4 {
-            areas.push(FocusArea {
-                name: "Performance & Optimization".to_string(),
-                instructions: "Focus on performance aspects. \
-                              Identify potential bottlenecks, optimize hot paths, \
-                              ensure efficient resource usage."
-                    .to_string(),
-            });
+            areas.push(FocusArea::new(
+                "Performance & Optimization",
+                "Focus on performance aspects. \
+                 Identify potential bottlenecks, optimize hot paths, \
+                 ensure efficient resource usage.",
+            ));
         }
 
         // Security focus for security-sensitive tasks
         if analysis.is_security_sensitive && count > 5 {
-            areas.push(FocusArea {
-                name: "Security Review".to_string(),
-                instructions: "Focus on security aspects. \
-                              Check for vulnerabilities, ensure proper input validation, \
-                              review authentication and authorization logic."
-                    .to_string(),
-            });
+            areas.push(FocusArea::new(
+                "Security Review",
+                "Focus on security aspects. \
+                 Check for vulnerabilities, ensure proper input validation, \
+                 review authentication and authorization logic.",
+            ));
         }
 
         // Add generic review areas if we need more
         while areas.len() < count {
             let i = areas.len();
-            areas.push(FocusArea {
-                name: format!("Additional Review #{}", i - 4),
-                instructions: format!(
+            areas.push(FocusArea::new(
+                format!("Additional Review #{}", i - 4),
+                format!(
                     "Review iteration {}. Check the work done by other agents, \
                      look for issues, suggest improvements, and fill any gaps.",
                     i - 4
                 ),
-            });
+            ));
         }
 
         areas.truncate(count);
+
+        // Evolve all focus areas for the current iteration
         areas
+            .into_iter()
+            .map(|area| area.evolve(iteration))
+            .collect()
     }
 
     /// Discover relevant files in the working directory
@@ -399,8 +438,40 @@ impl TaskDecomposer {
     }
 
     /// Detect project components (frontend, backend, tests, etc.)
-    fn detect_project_components(&self) -> Vec<ProjectComponent> {
+    fn detect_project_components(&self, task: &str) -> Vec<ProjectComponent> {
         let mut components = Vec::new();
+
+        if task_mentions_web(task) {
+            let frontend_dirs = [
+                "frontend",
+                "web",
+                "client",
+                "app",
+                "pages",
+                "ui",
+                "src/ui",
+                "src/app",
+                "src/pages",
+            ];
+            let mut files = Vec::new();
+            let mut seen = std::collections::HashSet::new();
+            for dir in frontend_dirs {
+                let path = self.working_dir.join(dir);
+                if path.exists() && path.is_dir() {
+                    for file in self.collect_component_files(&path) {
+                        if seen.insert(file.clone()) {
+                            files.push(file);
+                        }
+                    }
+                }
+            }
+
+            components.push(ProjectComponent {
+                name: "Frontend".to_string(),
+                description: "Web UI, routing, layout, and client-side behavior.".to_string(),
+                files,
+            });
+        }
 
         // Check for common project structures
         let check_dirs = [
@@ -475,10 +546,70 @@ impl TaskDecomposer {
     }
 }
 
+fn task_mentions_web(task: &str) -> bool {
+    let task = task.to_lowercase();
+    let keywords = [
+        "website",
+        "web app",
+        "webapp",
+        "frontend",
+        "ui",
+        "landing page",
+        "react",
+        "next.js",
+        "nextjs",
+        "html",
+        "css",
+        "tailwind",
+    ];
+    keywords.iter().any(|keyword| task.contains(keyword))
+}
+
 /// A focus area for an agent
-struct FocusArea {
-    name: String,
-    instructions: String,
+#[derive(Debug, Clone)]
+pub struct FocusArea {
+    /// Name of the focus area
+    pub name: String,
+    /// Instructions for this focus area
+    pub instructions: String,
+    /// Evolution level (increases across iterations)
+    pub evolution_level: u32,
+}
+
+impl FocusArea {
+    /// Create a new focus area
+    pub fn new(name: impl Into<String>, instructions: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            instructions: instructions.into(),
+            evolution_level: 0,
+        }
+    }
+
+    /// Evolve the focus area for the next iteration
+    pub fn evolve(&self, iteration: u32) -> Self {
+        let evolved_instructions = match iteration {
+            1 => self.instructions.clone(),
+            2 => format!(
+                "{}\n\nIteration 2: Go deeper. Look for edge cases and potential issues that were missed.",
+                self.instructions
+            ),
+            3 => format!(
+                "{}\n\nIteration 3: Focus on refinement. Clean up, optimize, and harden what was built.",
+                self.instructions
+            ),
+            _ => format!(
+                "{}\n\nIteration {}: Advanced pass. Consider performance, security, and maintainability.",
+                self.instructions, iteration
+            ),
+        };
+
+        Self {
+            name: self.name.clone(),
+            instructions: evolved_instructions,
+            evolution_level: iteration,
+        }
+    }
 }
 
 /// A detected project component
@@ -524,5 +655,27 @@ mod tests {
         assert_eq!(areas.len(), 5);
         assert!(areas[0].name.contains("Core"));
         assert!(areas[1].name.contains("Testing"));
+    }
+
+    #[test]
+    fn test_web_task_prefers_frontend_component() {
+        let temp_dir = TempDir::new().unwrap();
+        let decomposer = TaskDecomposer::new(temp_dir.path());
+
+        let config = SwarmConfig {
+            agent_count: 1,
+            decomposition_strategy: DecompositionStrategy::Auto,
+            ..Default::default()
+        };
+
+        let analysis = TaskAnalysis::default();
+        let subtasks = decomposer.decompose(
+            "Create a website with a landing page and signup flow",
+            &analysis,
+            &config,
+        );
+
+        assert_eq!(subtasks.len(), 1);
+        assert_eq!(subtasks[0].focus, "Frontend");
     }
 }

@@ -557,6 +557,178 @@ If no new capabilities would significantly help, return an empty array [].
         })
     }
 
+    /// Generate specialized agents proactively based on task domains
+    ///
+    /// This is the core method for making the Creative Overseer generate
+    /// "lots of specialized agents" as requested. It analyzes the task
+    /// and creates domain-specific agents that can work in parallel.
+    pub async fn generate_specialized_agents(
+        &mut self,
+        task: &str,
+        domains: &[String],
+        technologies: &[String],
+        agent_count: u32,
+    ) -> Result<Vec<CapabilityIdea>> {
+        if !self.config.enabled {
+            return Ok(vec![]);
+        }
+
+        info!(
+            "Creative Overseer generating {} specialized agents for domains: {:?}",
+            agent_count, domains
+        );
+
+        // Build a specialized prompt for agent generation
+        let prompt = self.build_agent_generation_prompt(task, domains, technologies, agent_count);
+
+        // Call Claude for agent brainstorming
+        let response = self.call_claude(&prompt)?;
+
+        // Parse agent ideas from response
+        let ideas = self.parse_agent_ideas(&response)?;
+
+        debug!("Generated {} specialized agent ideas", ideas.len());
+
+        // Synthesize each agent
+        let mut generated_agents = Vec::new();
+        for mut idea in ideas {
+            if idea.confidence >= self.config.min_confidence_to_synthesize {
+                match self.synthesize_idea(&idea).await {
+                    Ok(_) => {
+                        idea.synthesized = true;
+                        idea.synthesis_success = Some(true);
+                        info!(
+                            "Synthesized specialized agent: {} ({})",
+                            idea.name, idea.description
+                        );
+                    }
+                    Err(e) => {
+                        idea.synthesis_success = Some(false);
+                        warn!("Failed to synthesize agent {}: {}", idea.name, e);
+                    }
+                }
+            }
+            generated_agents.push(idea);
+        }
+
+        Ok(generated_agents)
+    }
+
+    /// Build prompt specifically for generating specialized agents
+    fn build_agent_generation_prompt(
+        &self,
+        task: &str,
+        domains: &[String],
+        technologies: &[String],
+        agent_count: u32,
+    ) -> String {
+        let domains_str = if domains.is_empty() {
+            "General software development".to_string()
+        } else {
+            domains.join(", ")
+        };
+
+        let tech_str = if technologies.is_empty() {
+            "Not specified".to_string()
+        } else {
+            technologies.join(", ")
+        };
+
+        format!(
+            r#"You are the Creative Overseer generating a TEAM of specialized agents for a software task.
+
+## Task
+{task}
+
+## Detected Domains
+{domains}
+
+## Technologies
+{technologies}
+
+## Your Mission
+Generate EXACTLY {count} specialized agents that together can accomplish this task.
+Each agent should have a DISTINCT specialization that complements the others.
+
+Think about what TEAM composition would be most effective:
+- What specialized knowledge domains are needed?
+- What different perspectives would help?
+- What roles need to be filled?
+
+## Agent Specializations to Consider
+- Testing/QA: Write and run tests
+- Security: Audit and harden code
+- API/Backend: Design and implement endpoints
+- Database: Schema, migrations, queries
+- Frontend/UI: Components and UX
+- DevOps: CI/CD, deployment, infra
+- Documentation: Comments, READMEs, specs
+- Performance: Optimization, profiling
+- Architecture: System design, patterns
+
+## Response Format
+Respond with a JSON array of EXACTLY {count} agent definitions:
+
+```json
+[
+  {{
+    "capability_type": "Agent",
+    "name": "agent-name-kebab-case",
+    "description": "What this agent specializes in",
+    "rationale": "Why this agent helps complete the task",
+    "confidence": 0.8,
+    "effort_estimate": "Low"
+  }}
+]
+```
+
+IMPORTANT:
+- Generate EXACTLY {count} agents
+- Each agent must have a UNIQUE specialization
+- Focus on what would GENUINELY help this specific task
+- Use confidence 0.7+ for agents that are clearly needed
+- Names should be descriptive (e.g., "rust-testing-agent", "api-security-agent")
+"#,
+            task = task,
+            domains = domains_str,
+            technologies = tech_str,
+            count = agent_count
+        )
+    }
+
+    /// Parse agent-specific ideas from Claude's response
+    fn parse_agent_ideas(&self, response: &str) -> Result<Vec<CapabilityIdea>> {
+        // Extract JSON from response (may be wrapped in markdown code blocks)
+        let json_str = if let Some(start) = response.find('[') {
+            if let Some(end) = response.rfind(']') {
+                &response[start..=end]
+            } else {
+                return Ok(vec![]);
+            }
+        } else {
+            return Ok(vec![]);
+        };
+
+        // Parse JSON
+        let mut ideas: Vec<CapabilityIdea> = serde_json::from_str(json_str).map_err(|e| {
+            debug!("Failed to parse agent ideas JSON: {}", e);
+            anyhow!("Failed to parse agent ideas: {}", e)
+        })?;
+
+        // Ensure all are Agent type and filter by confidence
+        ideas.retain(|i| i.capability_type == CapabilityType::Agent && i.confidence >= 0.5);
+
+        Ok(ideas)
+    }
+
+    /// Get the list of generated agents for swarm assignment
+    pub fn get_generated_agents(&self) -> Vec<&CapabilityIdea> {
+        self.ideas_generated
+            .iter()
+            .filter(|i| i.capability_type == CapabilityType::Agent && i.synthesized)
+            .collect()
+    }
+
     /// Build a prompt based on observing the current task context
     fn build_observation_prompt(&self, snapshot: &super::context::TaskSnapshot) -> String {
         let domains_str = if snapshot.domains.is_empty() {

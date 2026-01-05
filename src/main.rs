@@ -739,6 +739,11 @@ async fn main() -> Result<()> {
         print_header(args.no_color);
     }
 
+    let execution_dir = args
+        .dir
+        .clone()
+        .unwrap_or_else(|| default_execution_dir());
+
     // Parse evidence level
     let evidence_level = args.evidence_level.parse::<EvidenceLevel>().unwrap_or_else(|e| {
         eprintln!("Warning: {}", e);
@@ -756,7 +761,7 @@ async fn main() -> Result<()> {
 
     // Build configuration - agents run until done
     let config = Config {
-        working_dir: working_dir.clone(),
+        working_dir: execution_dir.clone(),
         completion_promise: args.promise.clone(),
         model: args.model.clone(),
         dry_run: args.dry_run,
@@ -769,7 +774,7 @@ async fn main() -> Result<()> {
             task: task.clone(),
             iteration: starting_iteration,
             max_iterations: u32::MAX,
-            working_dir: working_dir.clone(),
+            working_dir: execution_dir.clone(),
             completion_promise: args.promise.clone(),
             model: args.model.clone(),
             completed: false,
@@ -823,7 +828,7 @@ async fn main() -> Result<()> {
 
     // Check for detect-gaps-only mode
     if args.detect_gaps_only {
-        let analyzer = TaskAnalyzer::new().with_working_dir(&working_dir);
+        let analyzer = TaskAnalyzer::new().with_working_dir(&execution_dir);
         let gaps = analyzer.detect_capability_gaps(&task);
 
         if gaps.is_empty() {
@@ -905,7 +910,9 @@ async fn main() -> Result<()> {
             let coordinator = if self_extend_enabled {
                 let mut extension_config = gogo_gadget::task_loop::ExtensionConfig::default();
                 extension_config.enabled = true;
-                extension_config.registry_path = working_dir.join(".gogo-gadget").join("capabilities.json");
+                extension_config.registry_path = execution_dir
+                    .join(".gogo-gadget")
+                    .join("capabilities.json");
                 coordinator.with_extension_config(extension_config)
             } else {
                 coordinator
@@ -920,7 +927,7 @@ async fn main() -> Result<()> {
                 use gogo_gadget::extend::CapabilityRegistry;
                 use std::sync::{Arc, Mutex};
 
-                let registry_path = working_dir.join(".gogo-gadget").join("capabilities.json");
+                let registry_path = execution_dir.join(".gogo-gadget").join("capabilities.json");
                 let registry = Arc::new(Mutex::new(
                     CapabilityRegistry::load_from(&registry_path).unwrap_or_else(|err| {
                         eprintln!(
@@ -951,7 +958,7 @@ async fn main() -> Result<()> {
             task: task.clone(),
             iteration: result.iterations,
             max_iterations: u32::MAX,
-            working_dir,
+            working_dir: execution_dir,
             completion_promise: args.promise,
             model: args.model,
             completed: result.success,
@@ -970,6 +977,39 @@ async fn main() -> Result<()> {
     } else {
         std::process::exit(1);
     }
+}
+
+fn default_execution_dir() -> PathBuf {
+    let base_dir = std::env::var_os("GOGO_GADGET_RUNS_DIR")
+        .map(PathBuf::from)
+        .or_else(|| dirs_home().map(|home| home.join(".gogo-gadget").join("runs")))
+        .unwrap_or_else(|| std::env::temp_dir().join("gogo-gadget-runs"));
+
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let run_dir = base_dir.join(format!("run-{}", timestamp));
+
+    if let Err(err) = std::fs::create_dir_all(&run_dir) {
+        warn!("Failed to create default execution dir {:?}: {}", run_dir, err);
+    }
+
+    run_dir
+}
+
+fn dirs_home() -> Option<PathBuf> {
+    if let Some(home) = std::env::var_os("HOME") {
+        return Some(PathBuf::from(home));
+    }
+    if let Some(profile) = std::env::var_os("USERPROFILE") {
+        return Some(PathBuf::from(profile));
+    }
+    if let (Some(drive), Some(path)) = (std::env::var_os("HOMEDRIVE"), std::env::var_os("HOMEPATH")) {
+        let combined = format!("{}{}", drive.to_string_lossy(), path.to_string_lossy());
+        return Some(PathBuf::from(combined));
+    }
+    None
 }
 
 /// Run the Creative Overseer in standalone mode for capability synthesis

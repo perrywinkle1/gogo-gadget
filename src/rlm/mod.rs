@@ -44,7 +44,7 @@ pub use chunker::{ChunkStrategy, ContextChunker, DefaultChunker};
 pub use context::RlmContext;
 pub use daemon::{RlmDaemon, RlmQuery, RlmResponse};
 pub use embeddings::{get_default_embedder, EmbeddingProvider};
-pub use executor::RlmExecutor;
+pub use executor::{CreativeArtifact, CreativePipelineResult, PipelineStageResult, RlmExecutor};
 pub use navigator::{NavigationContext, NavigationDecision, NavigationEngine, Navigator};
 pub use parallel::{ParallelConfig, ParallelExplorer, ParallelResult};
 pub use persistence::{load_state, save_state, DaemonStats, RlmCheckpoint, RlmState};

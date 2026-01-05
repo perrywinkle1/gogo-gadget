@@ -181,6 +181,12 @@ struct AssignmentHistory {
     last_agent_summaries: Vec<String>,
 }
 
+#[derive(Debug, Clone)]
+struct AgentProfile {
+    name: String,
+    specialization: String,
+}
+
 impl AssignmentHistory {
     fn fingerprint(subtask: &super::Subtask) -> String {
         let mut files = subtask
@@ -471,10 +477,10 @@ impl SwarmCoordinator {
             let analysis = self.analyzer.analyze(&evolved_task)?;
             info!("Task analysis complete: complexity={}", analysis.complexity_score);
 
-            // Phase 2: Decompose into subtasks
+            // Phase 2: Decompose into subtasks (with iteration-specific evolution)
             let decomposer = TaskDecomposer::new(&self.config.working_dir);
-            let mut subtasks = decomposer.decompose(&evolved_task, &analysis, &self.config);
-            info!("Task decomposed into {} subtasks", subtasks.len());
+            let mut subtasks = decomposer.decompose_for_iteration(&evolved_task, &analysis, &self.config, iteration);
+            info!("Task decomposed into {} subtasks (iteration {})", subtasks.len(), iteration);
 
             let repeat_detected = assignment_history.is_repeat(&subtasks);
             if repeat_detected && rlm_attempts < 2 {
@@ -510,6 +516,11 @@ impl SwarmCoordinator {
             // Inject assignment history warning and capability context (in order)
             if let Some(history_block) = assignment_history.format_context() {
                 inject_context_block(&mut subtasks, &history_block);
+            }
+
+            let agent_profiles = self.load_agent_profiles();
+            if !agent_profiles.is_empty() {
+                inject_agent_assignments(&mut subtasks, &agent_profiles);
             }
 
             if let Some(capability_block) = self.refresh_capability_context() {
@@ -733,6 +744,45 @@ impl SwarmCoordinator {
             "Available capabilities (use when helpful):\n{}",
             list
         ))
+    }
+
+    fn load_agent_profiles(&self) -> Vec<AgentProfile> {
+        let config = match self.extension_config.as_ref() {
+            Some(config) if config.enabled => config,
+            _ => return Vec::new(),
+        };
+
+        let registry = match CapabilityRegistry::load_from(&config.registry_path) {
+            Ok(registry) => registry,
+            Err(err) => {
+                warn!(
+                    "Failed to load capability registry from {:?}: {}",
+                    config.registry_path, err
+                );
+                return Vec::new();
+            }
+        };
+
+        registry
+            .agents
+            .into_iter()
+            .filter_map(|agent| {
+                let mut specialization = agent.specialization.trim().to_string();
+                if specialization.is_empty() {
+                    if let Some(extracted) = extract_agent_specialization(&agent.path) {
+                        specialization = extracted;
+                    }
+                }
+                if specialization.is_empty() {
+                    specialization = agent.name.trim().to_string();
+                }
+                let name = agent.name.trim().to_string();
+                if name.is_empty() {
+                    return None;
+                }
+                Some(AgentProfile { name, specialization })
+            })
+            .collect()
     }
 
     fn generate_rlm_guided_subtasks(
@@ -1268,8 +1318,23 @@ impl SwarmCoordinator {
         // Step 3: Hot load the capability
         info!("Hot loading capability: {}", synthesized.capability.name);
         let loader = HotLoader::new();
-        if let Err(e) = loader.load(&synthesized.capability) {
-            warn!("Hot loading failed (non-fatal): {}", e);
+        match loader.load(&synthesized.capability) {
+            Ok(load_result) => {
+                if load_result.success {
+                    info!(
+                        "✅ Hot-loaded {} to {:?} (restart_required: {})",
+                        synthesized.capability.name,
+                        load_result.installed_path,
+                        load_result.restart_required
+                    );
+                } else {
+                    warn!("Hot-load returned failure: {}", load_result.message);
+                }
+            }
+            Err(e) => {
+                warn!("Hot loading failed: {}", e);
+                // Continue anyway - the capability may still be usable in some cases
+            }
         }
 
         // Step 4: Register the capability
@@ -1398,6 +1463,82 @@ fn inject_context_block(subtasks: &mut [super::Subtask], context: &str) {
         subtask.description.push_str("\n\n---\n");
         subtask.description.push_str(context);
     }
+}
+
+fn inject_agent_assignments(subtasks: &mut [super::Subtask], agents: &[AgentProfile]) {
+    if agents.is_empty() {
+        return;
+    }
+
+    for subtask in subtasks {
+        let assigned = select_agent_for_subtask(subtask, agents);
+        let block = format!(
+            "Assigned specialized agent: {} ({})",
+            assigned.name, assigned.specialization
+        );
+        subtask.description.push_str("\n\n---\n");
+        subtask.description.push_str(&block);
+    }
+}
+
+fn select_agent_for_subtask<'a>(
+    subtask: &super::Subtask,
+    agents: &'a [AgentProfile],
+) -> &'a AgentProfile {
+    let focus = subtask.focus.to_lowercase();
+    let description = subtask.description.to_lowercase();
+
+    let mut best_index = 0usize;
+    let mut best_score = 0usize;
+
+    for (index, agent) in agents.iter().enumerate() {
+        let tokens = split_keywords(&format!("{} {}", agent.name, agent.specialization));
+        let mut score = 0usize;
+        for token in tokens {
+            if focus.contains(&token) {
+                score += 2;
+            }
+            if description.contains(&token) {
+                score += 1;
+            }
+        }
+
+        if score > best_score {
+            best_score = score;
+            best_index = index;
+        }
+    }
+
+    if best_score == 0 {
+        let index = (subtask.id as usize) % agents.len();
+        &agents[index]
+    } else {
+        &agents[best_index]
+    }
+}
+
+fn split_keywords(value: &str) -> Vec<String> {
+    value
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|token| token.len() >= 3)
+        .map(|token| token.to_lowercase())
+        .collect()
+}
+
+fn extract_agent_specialization(path: &Path) -> Option<String> {
+    let content = std::fs::read_to_string(path).ok()?;
+    let mut lines = content.lines();
+    while let Some(line) = lines.next() {
+        if line.trim().eq_ignore_ascii_case("## Specialization") {
+            for next in lines.by_ref() {
+                let trimmed = next.trim();
+                if !trimmed.is_empty() {
+                    return Some(trimmed.to_string());
+                }
+            }
+        }
+    }
+    None
 }
 
 fn format_limited_list(items: &[String], limit: usize) -> String {
