@@ -27,11 +27,13 @@ use crate::extend::{
     CapabilityGap, CapabilityRegistry, GapDetector, HotLoader, SynthesisEngine,
     CapabilityVerifier,
 };
+use crate::rlm::{RlmConfig, RlmExecutor, RlmResult};
 use crate::task_loop::ExtensionConfig;
 use crate::{Config, ProgressCallback, ShutdownSignal, TaskResult};
 use anyhow::{Context, Result};
 use std::collections::HashSet;
 use std::fs;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
 use std::time::Instant;
@@ -169,6 +171,133 @@ impl FeedbackHistory {
     }
 }
 
+/// Tracks assignment history to avoid repeating subtasks across iterations
+#[derive(Debug, Default)]
+struct AssignmentHistory {
+    last_fingerprints: Vec<String>,
+    seen_fingerprints: HashSet<String>,
+    last_focuses: Vec<String>,
+    files_modified: HashSet<PathBuf>,
+    last_agent_summaries: Vec<String>,
+}
+
+impl AssignmentHistory {
+    fn fingerprint(subtask: &super::Subtask) -> String {
+        let mut files = subtask
+            .target_files
+            .iter()
+            .map(|path| path.display().to_string())
+            .collect::<Vec<_>>();
+        files.sort();
+        if files.is_empty() {
+            subtask.focus.trim().to_string()
+        } else {
+            format!("{}|{}", subtask.focus.trim(), files.join(","))
+        }
+    }
+
+    fn fingerprints_for(subtasks: &[super::Subtask]) -> Vec<String> {
+        let mut fingerprints = subtasks
+            .iter()
+            .map(Self::fingerprint)
+            .collect::<Vec<_>>();
+        fingerprints.sort();
+        fingerprints
+    }
+
+    fn is_repeat(&self, subtasks: &[super::Subtask]) -> bool {
+        let fingerprints = Self::fingerprints_for(subtasks);
+        if fingerprints.is_empty() {
+            return false;
+        }
+
+        if fingerprints == self.last_fingerprints {
+            return true;
+        }
+
+        fingerprints
+            .iter()
+            .all(|fingerprint| self.seen_fingerprints.contains(fingerprint))
+    }
+
+    fn update(&mut self, subtasks: &[super::Subtask], result: &SwarmResult) {
+        let fingerprints = Self::fingerprints_for(subtasks);
+        self.last_fingerprints = fingerprints.clone();
+        for fingerprint in fingerprints {
+            self.seen_fingerprints.insert(fingerprint);
+        }
+
+        let mut focus_seen = HashSet::new();
+        self.last_focuses = subtasks
+            .iter()
+            .filter_map(|subtask| {
+                if focus_seen.insert(subtask.focus.clone()) {
+                    Some(subtask.focus.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        for agent_result in &result.agent_results {
+            for file in &agent_result.files_modified {
+                self.files_modified.insert(file.clone());
+            }
+        }
+
+        self.last_agent_summaries = result
+            .agent_results
+            .iter()
+            .filter_map(|r| r.result.summary.clone())
+            .filter(|summary| !summary.trim().is_empty())
+            .collect();
+    }
+
+    fn format_context(&self) -> Option<String> {
+        let mut lines = Vec::new();
+
+        if !self.last_focuses.is_empty() {
+            let focus_list = format_limited_list(&self.last_focuses, 6);
+            lines.push(format!(
+                "Previously assigned focus areas: {}.",
+                focus_list
+            ));
+        }
+
+        if !self.files_modified.is_empty() {
+            let mut files = self
+                .files_modified
+                .iter()
+                .map(|path| path.display().to_string())
+                .collect::<Vec<_>>();
+            files.sort();
+            let file_list = format_limited_list(&files, 8);
+            lines.push(format!("Files already touched: {}.", file_list));
+        }
+
+        if !self.last_agent_summaries.is_empty() {
+            lines.push("Recent summaries:".to_string());
+            for summary in self.last_agent_summaries.iter().take(3) {
+                lines.push(format!("- {}", summary.trim()));
+            }
+        }
+
+        if lines.is_empty() {
+            return None;
+        }
+
+        lines.push("Avoid repeating the exact same assignments.".to_string());
+        Some(lines.join("\n"))
+    }
+}
+
+#[derive(Debug)]
+struct RlmSuggestion {
+    focus: String,
+    files: Vec<PathBuf>,
+    file_labels: Vec<String>,
+}
+
 /// Completion signal types
 enum CompletionSignal {
     /// Task is complete with optional summary
@@ -284,6 +413,8 @@ impl SwarmCoordinator {
         let start_time = Instant::now();
         let mut iteration = 1u32;
         let mut feedback_history = FeedbackHistory::new(task);
+        let mut assignment_history = AssignmentHistory::default();
+        let mut rlm_attempts = 0u32;
         let mut final_result: Option<SwarmResult> = None;
 
         info!(
@@ -332,8 +463,24 @@ impl SwarmCoordinator {
 
             // Phase 2: Decompose into subtasks
             let decomposer = TaskDecomposer::new(&self.config.working_dir);
-            let subtasks = decomposer.decompose(&evolved_task, &analysis, &self.config);
+            let mut subtasks = decomposer.decompose(&evolved_task, &analysis, &self.config);
             info!("Task decomposed into {} subtasks", subtasks.len());
+
+            let repeat_detected = assignment_history.is_repeat(&subtasks);
+            if repeat_detected && rlm_attempts < 2 {
+                rlm_attempts += 1;
+                info!(
+                    "Repeat assignments detected, attempting RLM-guided decomposition (attempt {})",
+                    rlm_attempts
+                );
+                let rlm_subtasks = self.generate_rlm_guided_subtasks(&evolved_task, &assignment_history);
+                if !rlm_subtasks.is_empty() {
+                    subtasks = rlm_subtasks;
+                    info!("RLM-guided decomposition produced {} subtasks", subtasks.len());
+                } else {
+                    warn!("RLM-guided decomposition did not produce usable subtasks");
+                }
+            }
 
             // Update shared context with subtasks for overseer observation
             if let Some(ref ctx) = self.shared_context {
@@ -350,6 +497,15 @@ impl SwarmCoordinator {
             }
             println!();
 
+            // Inject assignment history warning and capability context (in order)
+            if let Some(history_block) = assignment_history.format_context() {
+                inject_context_block(&mut subtasks, &history_block);
+            }
+
+            if let Some(capability_block) = self.refresh_capability_context() {
+                inject_context_block(&mut subtasks, &capability_block);
+            }
+
             // Phase 3: Execute subtasks in parallel
             // Update shared context for Creative Overseer observation
             if let Some(ref ctx) = self.shared_context {
@@ -362,6 +518,7 @@ impl SwarmCoordinator {
                 SwarmExecutor::new(self.config.clone())
             };
 
+            let subtasks_for_history = subtasks.clone();
             let mut result = executor.execute(subtasks).await?;
 
             // Update context: Aggregating phase (collecting and resolving results)
@@ -498,6 +655,7 @@ impl SwarmCoordinator {
                 }
             }
 
+            assignment_history.update(&subtasks_for_history, &result);
             final_result = Some(result);
             iteration += 1;
 
@@ -519,6 +677,160 @@ impl SwarmCoordinator {
         });
         result.total_duration_ms = start_time.elapsed().as_millis() as u64;
         Ok(result)
+    }
+
+    fn refresh_capability_context(&self) -> Option<String> {
+        let enabled = self
+            .extension_config
+            .as_ref()
+            .map(|config| config.enabled)
+            .unwrap_or(false);
+        if !enabled {
+            return None;
+        }
+
+        let registry = match CapabilityRegistry::load_or_create() {
+            Ok(registry) => registry,
+            Err(err) => {
+                warn!("Failed to load capability registry: {}", err);
+                return None;
+            }
+        };
+
+        let mut entries = Vec::new();
+        for skill in registry.skills {
+            entries.push(("Skill", skill.name));
+        }
+        for mcp in registry.mcps {
+            entries.push(("MCP", mcp.name));
+        }
+        for agent in registry.agents {
+            entries.push(("Agent", agent.name));
+        }
+
+        if entries.is_empty() {
+            return None;
+        }
+
+        entries.sort_by(|a, b| a.0.cmp(b.0).then_with(|| a.1.cmp(&b.1)));
+        let list = entries
+            .into_iter()
+            .take(10)
+            .map(|(kind, name)| format!("- {}: {}", kind, name))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        Some(format!(
+            "Available capabilities (use when helpful):\n{}",
+            list
+        ))
+    }
+
+    fn generate_rlm_guided_subtasks(
+        &self,
+        task: &str,
+        history: &AssignmentHistory,
+    ) -> Vec<super::Subtask> {
+        let focus_list = if history.last_focuses.is_empty() {
+            "none".to_string()
+        } else {
+            format_limited_list(&history.last_focuses, 6)
+        };
+
+        let files_list = if history.files_modified.is_empty() {
+            "none".to_string()
+        } else {
+            let mut files = history
+                .files_modified
+                .iter()
+                .map(|path| path.display().to_string())
+                .collect::<Vec<_>>();
+            files.sort();
+            format_limited_list(&files, 8)
+        };
+
+        let query = format!(
+            "You are helping decompose this task into parallel worker assignments.\n\
+             Task: \"{}\"\n\
+             Avoid repeating these focus areas: {}.\n\
+             Files already touched: {}.\n\
+             Suggest 3-5 new focus areas and relevant files.\n\
+             Return each suggestion on its own line in the format:\n\
+             <Focus> | Files: <comma-separated paths>",
+            task, focus_list, files_list
+        );
+
+        let config = RlmConfig::default();
+        let mut executor = RlmExecutor::new(config, self.config.working_dir.clone());
+        let result = match executor.execute(&query, &self.config.working_dir) {
+            Ok(result) => result,
+            Err(err) => {
+                warn!("RLM-guided decomposition failed: {}", err);
+                return Vec::new();
+            }
+        };
+
+        let parse_limit = std::cmp::min(self.config.agent_count as usize, 5);
+        let mut suggestions =
+            parse_rlm_suggestions(&result, &self.config.working_dir, parse_limit);
+        if suggestions.is_empty() {
+            return Vec::new();
+        }
+
+        let agent_count = self.config.agent_count as usize;
+        let mut subtasks = Vec::new();
+        for (i, suggestion) in suggestions.drain(..).take(agent_count).enumerate() {
+            let files_line = if suggestion.file_labels.is_empty() {
+                "No specific files suggested.".to_string()
+            } else {
+                format!("Relevant files: {}", suggestion.file_labels.join(", "))
+            };
+
+            let description = format!(
+                "{}\n\n**Agent {} Focus**: {}\n{}",
+                task,
+                i + 1,
+                suggestion.focus,
+                files_line
+            );
+
+            subtasks.push(super::Subtask {
+                id: i as u32,
+                description,
+                focus: suggestion.focus,
+                target_files: suggestion.files,
+                shared_context: None,
+                priority: i as u32,
+                use_subagent_mode: false,
+                subagent_depth: 0,
+            });
+        }
+
+        while subtasks.len() < agent_count {
+            let id = subtasks.len() as u32;
+            subtasks.push(self.create_review_subtask(task, id));
+        }
+
+        subtasks
+    }
+
+    fn create_review_subtask(&self, task: &str, id: u32) -> super::Subtask {
+        super::Subtask {
+            id,
+            description: format!(
+                "{}\n\n**Agent {} Focus**: Review and Verification\n\
+                 Review the work done by other agents. Run tests, check for issues, \
+                 verify the implementation is complete and correct.",
+                task,
+                id + 1
+            ),
+            focus: "Review and Verification".to_string(),
+            target_files: vec![],
+            shared_context: None,
+            priority: id + 100,
+            use_subagent_mode: false,
+            subagent_depth: 0,
+        }
     }
 
     /// Check if shutdown was requested
@@ -912,7 +1224,7 @@ impl SwarmCoordinator {
     async fn synthesize_capability(
         &mut self,
         gap: &CapabilityGap,
-        ext_config: &ExtensionConfig,
+        _ext_config: &ExtensionConfig,
     ) -> Result<bool> {
         let synthesis_engine = match &self.synthesis_engine {
             Some(engine) => engine,
@@ -1068,6 +1380,166 @@ impl SwarmCoordinator {
 
         result
     }
+}
+
+fn inject_context_block(subtasks: &mut [super::Subtask], context: &str) {
+    for subtask in subtasks {
+        subtask.description.push_str("\n\n---\n");
+        subtask.description.push_str(context);
+    }
+}
+
+fn format_limited_list(items: &[String], limit: usize) -> String {
+    let mut list = items.iter().take(limit).cloned().collect::<Vec<_>>();
+    if items.len() > limit {
+        list.push("...".to_string());
+    }
+    list.join(", ")
+}
+
+fn parse_rlm_suggestions(
+    result: &RlmResult,
+    working_dir: &Path,
+    limit: usize,
+) -> Vec<RlmSuggestion> {
+    let mut lines = Vec::new();
+    if !result.key_insights.is_empty() {
+        lines.extend(result.key_insights.iter().cloned());
+    }
+    if lines.is_empty() && !result.answer.trim().is_empty() {
+        lines.extend(result.answer.lines().map(|line| line.to_string()));
+    }
+
+    let mut suggestions = Vec::new();
+    for line in lines {
+        if suggestions.len() >= limit {
+            break;
+        }
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let cleaned = trimmed.trim_start_matches(|c: char| {
+            c.is_ascii_digit() || c == '.' || c == '-' || c == '*' || c == ')' || c == ' '
+        });
+        if cleaned.is_empty() {
+            continue;
+        }
+
+        let (focus, mut file_labels) = parse_focus_and_files(cleaned);
+        if file_labels.is_empty() {
+            file_labels = extract_file_tokens(cleaned);
+        }
+
+        if focus.is_empty() {
+            continue;
+        }
+
+        let files = resolve_files(&file_labels, working_dir);
+
+        suggestions.push(RlmSuggestion {
+            focus,
+            files,
+            file_labels,
+        });
+    }
+
+    suggestions
+}
+
+fn parse_focus_and_files(line: &str) -> (String, Vec<String>) {
+    let mut focus = String::new();
+    let mut files = Vec::new();
+
+    let parts = line.split('|').collect::<Vec<_>>();
+    if parts.len() > 1 {
+        for part in parts {
+            let part_trim = part.trim();
+            let lower = part_trim.to_lowercase();
+            if lower.contains("file") {
+                files.extend(
+                    part_trim
+                        .splitn(2, ':')
+                        .nth(1)
+                        .unwrap_or("")
+                        .split(',')
+                        .map(|f| f.trim().trim_matches(|c: char| c == '"' || c == '\''))
+                        .filter(|f| !f.is_empty())
+                        .map(|f| f.to_string()),
+                );
+            } else if focus.is_empty() {
+                focus = part_trim
+                    .trim_start_matches("Focus:")
+                    .trim_start_matches("focus:")
+                    .trim()
+                    .to_string();
+            }
+        }
+    } else if let Some((left, right)) = split_on_files(line) {
+        focus = left.trim().trim_end_matches(':').trim().to_string();
+        files.extend(
+            right
+                .split(',')
+                .map(|f| f.trim().trim_matches(|c: char| c == '"' || c == '\''))
+                .filter(|f| !f.is_empty())
+                .map(|f| f.to_string()),
+        );
+    } else {
+        focus = line.trim().to_string();
+    }
+
+    (focus, files)
+}
+
+fn split_on_files(line: &str) -> Option<(&str, &str)> {
+    let lower = line.to_lowercase();
+    if let Some(index) = lower.find("files:") {
+        let (left, right) = line.split_at(index);
+        let right = &right["files:".len()..];
+        return Some((left, right));
+    }
+    None
+}
+
+fn extract_file_tokens(line: &str) -> Vec<String> {
+    let extensions = [
+        ".rs", ".toml", ".md", ".json", ".yaml", ".yml", ".js", ".jsx", ".ts", ".tsx", ".py",
+        ".go", ".java", ".rb", ".php", ".cpp", ".cc", ".c", ".h", ".hpp", ".sh", ".bash",
+    ];
+    let mut files = Vec::new();
+    for token in line.split_whitespace() {
+        let trimmed = token.trim_matches(|c: char| {
+            c == ',' || c == '.' || c == ';' || c == ':' || c == '(' || c == ')' || c == '['
+                || c == ']' || c == '{' || c == '}' || c == '"' || c == '\''
+        });
+        if trimmed.is_empty() {
+            continue;
+        }
+        let lower = trimmed.to_lowercase();
+        let is_path = trimmed.contains('/') || trimmed.contains('\\');
+        let has_ext = extensions.iter().any(|ext| lower.ends_with(ext));
+        if is_path || has_ext {
+            files.push(trimmed.to_string());
+        }
+    }
+    files
+}
+
+fn resolve_files(labels: &[String], working_dir: &Path) -> Vec<PathBuf> {
+    let mut files = Vec::new();
+    let mut seen = HashSet::new();
+    for label in labels {
+        let candidate = PathBuf::from(label);
+        let path = if candidate.is_absolute() {
+            candidate
+        } else {
+            working_dir.join(candidate)
+        };
+        if path.exists() && seen.insert(path.clone()) {
+            files.push(path);
+        }
+    }
+    files
 }
 
 /// Convert SwarmResult to TaskResult for compatibility

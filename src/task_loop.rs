@@ -19,7 +19,7 @@
 
 use crate::extend::{
     CapabilityGap, CapabilityRegistry, GapDetector, HotLoader, SynthesisEngine,
-    CapabilityVerifier, SynthesizedCapability, VerificationResult,
+    CapabilityVerifier, SynthesizedCapability,
 };
 use crate::verify::{MockDataResult, Severity, Verifier};
 use crate::{
@@ -153,7 +153,7 @@ impl TaskLoop {
     }
 
     /// Enable self-extending capabilities with default configuration
-    pub fn with_extension_enabled(mut self) -> Self {
+    pub fn with_extension_enabled(self) -> Self {
         let mut config = ExtensionConfig::default();
         config.enabled = true;
         self.with_extension_config(config)
@@ -507,18 +507,6 @@ impl TaskLoop {
                     // Verify the output
                     let verification = self.verifier.verify(&output, &self.config.working_dir);
 
-                    // Emit shortcut detection events
-                    for shortcut in &verification.shortcuts {
-                        self.emit_progress(
-                            ProgressEvent::new(
-                                ProgressEventType::ShortcutDetected,
-                                iteration,
-                                0,
-                            )
-                            .with_message(format!("{:?}", shortcut)),
-                        );
-                    }
-
                     if verification.is_complete {
                         info!("Task verified as complete");
                         checkpoint.state = TaskState::Complete;
@@ -548,7 +536,7 @@ impl TaskLoop {
                     // Evolve feedback based on verification results
                     let feedback = self.generate_evolved_feedback(
                         iteration,
-                        &verification.shortcuts,
+                        verification.llm_check.as_ref(),
                         &structured,
                         &checkpoint.iteration_history,
                     );
@@ -1121,23 +1109,22 @@ There is no iteration limit. Focus on actual outcomes, not progress.
     fn generate_evolved_feedback(
         &self,
         iteration: u32,
-        shortcuts: &[crate::verify::ShortcutType],
+        llm_check: Option<&crate::verify::LlmCompletionCheck>,
         structured: &Option<ClaudeStructuredOutput>,
         history: &[IterationAttempt],
     ) -> String {
         let mut feedback = String::new();
 
-        // Add shortcut warnings
-        if !shortcuts.is_empty() {
-            warn!("Shortcuts detected: {:?}", shortcuts);
-            feedback.push_str(&format!(
-                "\n\n---\n**⚠️ Iteration {} Feedback - Shortcuts Detected**:\n",
-                iteration
-            ));
-            for shortcut in shortcuts {
-                feedback.push_str(&format!("- {:?}\n", shortcut));
+        if let Some(llm_check) = llm_check {
+            if !llm_check.next_steps.is_empty() {
+                feedback.push_str(&format!(
+                    "\n\n---\n**Iteration {} Feedback - LLM Next Steps**:\n",
+                    iteration
+                ));
+                for step in &llm_check.next_steps {
+                    feedback.push_str(&format!("- {}\n", step));
+                }
             }
-            feedback.push_str("Please address these issues before continuing.\n");
         }
 
         // Add structured output feedback
@@ -1184,6 +1171,7 @@ There is no iteration limit. Focus on actual outcomes, not progress.
     }
 
     /// Generate anti-laziness feedback when mock data is detected
+    #[allow(dead_code)]
     fn generate_anti_laziness_feedback(
         &self,
         mock_result: Option<&MockDataResult>,
@@ -1744,11 +1732,8 @@ Working on it:
         let verifier = Verifier::new(None);
         let task_loop = TaskLoop::new(config, verifier);
 
-        // Empty shortcuts since shortcut detection is deprecated
-        let shortcuts = vec![];
-
         // With no shortcuts, no structured output, and no history, feedback is empty
-        let feedback = task_loop.generate_evolved_feedback(1, &shortcuts, &None, &[]);
+        let feedback = task_loop.generate_evolved_feedback(1, None, &None, &[]);
         assert!(feedback.is_empty());
 
         // With structured output containing next steps, we should get feedback
@@ -1761,7 +1746,7 @@ Working on it:
             confidence: 0.5,
             raw_output: None,
         });
-        let feedback = task_loop.generate_evolved_feedback(1, &shortcuts, &structured, &[]);
+        let feedback = task_loop.generate_evolved_feedback(1, None, &structured, &[]);
         assert!(feedback.contains("next steps"));
         assert!(feedback.contains("1"));
     }

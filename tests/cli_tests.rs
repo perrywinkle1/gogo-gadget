@@ -1176,8 +1176,6 @@ mod subagent_mode_tests {
 
     #[test]
     fn test_registration_scope_global() {
-        let temp_dir = TempDir::new().unwrap();
-
         // Test that --registration-scope global is accepted
         // Note: We don't actually want to modify ~/.claude/settings.json in tests
         // so we just verify the flag is recognized
@@ -1206,6 +1204,7 @@ mod subagent_mode_tests {
             .arg("--subagent-mode")
             .arg("--subagent-config")
             .arg(config)
+            .arg("--dry-run")
             .arg("--dir")
             .arg(temp_dir.path())
             .output()

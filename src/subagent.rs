@@ -436,6 +436,7 @@ impl SubagentExecutor {
             CapabilityType::Mcp => loader.register_mcp(capability),
             CapabilityType::Skill => loader.register_skill(capability),
             CapabilityType::Agent => loader.register_agent(capability),
+            CapabilityType::Hook => loader.register_hook(capability),
         }?;
 
         if load_result.success {
@@ -496,6 +497,7 @@ impl SubagentExecutor {
             CapabilityType::Mcp => loader.unregister_mcp(&capability.name)?,
             CapabilityType::Skill => loader.unregister_skill(&capability.name)?,
             CapabilityType::Agent => loader.unregister_agent(&capability.name)?,
+            CapabilityType::Hook => loader.unregister_hook(&capability.name)?,
         };
 
         if load_result.success {

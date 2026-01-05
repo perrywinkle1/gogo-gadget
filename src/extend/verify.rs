@@ -367,6 +367,7 @@ impl CapabilityVerifier {
 
         // Step 1: Check file exists
         if !capability.path.exists() {
+            result.add_error(format!("Missing file: {:?}", capability.path));
             result.fail_step(
                 "file_exists",
                 "Check SKILL.md exists",
@@ -560,12 +561,69 @@ impl CapabilityVerifier {
         result
     }
 
+    /// Verify a hook capability
+    pub async fn verify_hook(&self, capability: &SynthesizedCapability) -> VerificationResult {
+        let start = std::time::Instant::now();
+        let mut result = VerificationResult::success();
+
+        // Step 1: Check if hook script file exists
+        if !capability.path.exists() {
+            result.fail_step("file_exists", "Hook script file not found", format!("Path: {:?}", capability.path));
+            return result;
+        }
+        result.pass_step("file_exists", "Hook script file exists");
+
+        // Step 2: Read and check script content
+        let content = match std::fs::read_to_string(&capability.path) {
+            Ok(c) => c,
+            Err(e) => {
+                result.fail_step("readable", format!("Cannot read hook script: {}", e), "Check file permissions");
+                return result;
+            }
+        };
+        result.pass_step("readable", "Hook script is readable");
+
+        // Step 3: Check for shebang
+        if content.starts_with("#!/") || content.starts_with("#!") {
+            result.pass_step("has_shebang", "Has proper shebang line");
+        } else {
+            result.add_warning("Hook script should start with a shebang (e.g., #!/bin/bash)");
+        }
+
+        // Step 4: Check script is not empty
+        let lines: Vec<&str> = content.lines().filter(|l| !l.trim().is_empty() && !l.trim().starts_with('#')).collect();
+        if lines.is_empty() {
+            result.fail_step("has_content", "Hook script has no executable content", "Add at least one command");
+        } else {
+            result.pass_step("has_content", format!("Hook script has {} non-comment lines", lines.len()));
+        }
+
+        // Step 5: Check for common issues
+        if content.contains("rm -rf /") || content.contains("rm -rf /*") {
+            result.fail_step("safe_commands", "Hook contains dangerous rm -rf command", "Remove dangerous rm commands");
+        } else {
+            result.pass_step("safe_commands", "No obviously dangerous commands detected");
+        }
+
+        // Step 6: Check for proper exit
+        let has_exit = content.contains("exit 0") || content.contains("exit $");
+        if has_exit {
+            result.pass_step("has_exit", "Has proper exit statement");
+        } else {
+            result.add_warning("Hook should have an explicit exit statement");
+        }
+
+        result.duration_ms = start.elapsed().as_millis() as u64;
+        result
+    }
+
     /// Verify any capability
     pub async fn verify(&self, capability: &SynthesizedCapability) -> VerificationResult {
         match capability.capability_type {
             CapabilityType::Mcp => self.verify_mcp(capability).await,
             CapabilityType::Skill => self.verify_skill(capability).await,
             CapabilityType::Agent => self.verify_agent(capability).await,
+            CapabilityType::Hook => self.verify_hook(capability).await,
         }
     }
 

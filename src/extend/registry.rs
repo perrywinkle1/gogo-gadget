@@ -222,12 +222,84 @@ impl AgentCapability {
     }
 }
 
+/// Hook capability metadata
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HookCapability {
+    /// Name of the hook
+    pub name: String,
+    /// Path to hook script
+    pub path: PathBuf,
+    /// Hook event type (PreToolUse, PostToolUse, etc.)
+    pub event: String,
+    /// Tool matcher pattern
+    pub matcher: String,
+    /// Whether this was auto-synthesized
+    pub synthesized: bool,
+    /// Usage count
+    pub usage_count: u32,
+    /// Success rate (0.0-1.0)
+    pub success_rate: f32,
+    /// Last used timestamp
+    pub last_used: u64,
+    /// Created timestamp
+    pub created_at: u64,
+    /// Successful invocations
+    pub success_count: u32,
+    /// Failed invocations
+    pub failure_count: u32,
+}
+
+impl HookCapability {
+    /// Create a new hook capability
+    pub fn new(name: impl Into<String>, path: PathBuf, event: impl Into<String>, matcher: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            path,
+            event: event.into(),
+            matcher: matcher.into(),
+            synthesized: true,
+            usage_count: 0,
+            success_rate: 0.0,
+            last_used: 0,
+            created_at: current_timestamp(),
+            success_count: 0,
+            failure_count: 0,
+        }
+    }
+
+    /// Record a usage
+    pub fn record_usage(&mut self, success: bool) {
+        self.usage_count += 1;
+        self.last_used = current_timestamp();
+
+        if success {
+            self.success_count += 1;
+        } else {
+            self.failure_count += 1;
+        }
+
+        let total = self.success_count + self.failure_count;
+        self.success_rate = if total > 0 {
+            self.success_count as f32 / total as f32
+        } else {
+            0.0
+        };
+    }
+
+    /// Check if capability is stale
+    pub fn is_stale(&self, max_age_days: u32) -> bool {
+        let threshold = current_timestamp() - (max_age_days as u64 * 24 * 60 * 60);
+        self.last_used < threshold && self.synthesized
+    }
+}
+
 /// Wrapper enum for any capability type
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Capability {
     Mcp(McpCapability),
     Skill(SkillCapability),
     Agent(AgentCapability),
+    Hook(HookCapability),
 }
 
 impl Capability {
@@ -237,6 +309,7 @@ impl Capability {
             Capability::Mcp(c) => &c.name,
             Capability::Skill(c) => &c.name,
             Capability::Agent(c) => &c.name,
+            Capability::Hook(c) => &c.name,
         }
     }
 
@@ -246,6 +319,7 @@ impl Capability {
             Capability::Mcp(_) => CapabilityType::Mcp,
             Capability::Skill(_) => CapabilityType::Skill,
             Capability::Agent(_) => CapabilityType::Agent,
+            Capability::Hook(_) => CapabilityType::Hook,
         }
     }
 
@@ -255,6 +329,7 @@ impl Capability {
             Capability::Mcp(c) => c.synthesized,
             Capability::Skill(c) => c.synthesized,
             Capability::Agent(c) => c.synthesized,
+            Capability::Hook(c) => c.synthesized,
         }
     }
 }
@@ -268,6 +343,9 @@ pub struct CapabilityRegistry {
     pub skills: Vec<SkillCapability>,
     /// Registered agents
     pub agents: Vec<AgentCapability>,
+    /// Registered hooks
+    #[serde(default)]
+    pub hooks: Vec<HookCapability>,
     /// Last modified timestamp
     pub last_modified: u64,
     /// Version for schema migration
@@ -287,6 +365,7 @@ impl CapabilityRegistry {
             mcps: Vec::new(),
             skills: Vec::new(),
             agents: Vec::new(),
+            hooks: Vec::new(),
             last_modified: current_timestamp(),
             version: Self::CURRENT_VERSION,
             registry_path: Some(registry_path.clone()),
@@ -300,6 +379,7 @@ impl CapabilityRegistry {
             mcps: Vec::new(),
             skills: Vec::new(),
             agents: Vec::new(),
+            hooks: Vec::new(),
             last_modified: current_timestamp(),
             version: Self::CURRENT_VERSION,
             registry_path: Some(path),
@@ -383,6 +463,9 @@ impl CapabilityRegistry {
             CapabilityGap::Agent { name, .. } => {
                 self.agents.iter().any(|a| a.name.eq_ignore_ascii_case(name))
             }
+            CapabilityGap::Hook { name, .. } => {
+                self.hooks.iter().any(|h| h.name.eq_ignore_ascii_case(name))
+            }
         }
     }
 
@@ -391,6 +474,7 @@ impl CapabilityRegistry {
         self.mcps.iter().any(|m| m.name.eq_ignore_ascii_case(name))
             || self.skills.iter().any(|s| s.name.eq_ignore_ascii_case(name))
             || self.agents.iter().any(|a| a.name.eq_ignore_ascii_case(name))
+            || self.hooks.iter().any(|h| h.name.eq_ignore_ascii_case(name))
     }
 
     /// Find a capability by name
@@ -483,7 +567,7 @@ impl CapabilityRegistry {
     }
 
     /// Find capabilities by type
-    pub fn find_by_type(&self, capability_type: CapabilityType) -> Vec<&SynthesizedCapability> {
+    pub fn find_by_type(&self, _capability_type: CapabilityType) -> Vec<&SynthesizedCapability> {
         // This returns references to SynthesizedCapability, but our storage uses different types
         // We'll return an empty vec for now and rely on the alternative methods
         Vec::new()
@@ -637,6 +721,38 @@ impl CapabilityRegistry {
                     failure_count: 0,
                 });
             }
+            CapabilityType::Hook => {
+                // Check for duplicate
+                if self.hooks.iter().any(|h| h.name == capability.name) {
+                    return Err(anyhow::anyhow!("Hook '{}' already registered", capability.name));
+                }
+
+                // Extract event and matcher from config
+                let event = capability.config
+                    .get("event")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("PreToolUse")
+                    .to_string();
+                let matcher = capability.config
+                    .get("matcher")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("*")
+                    .to_string();
+
+                self.hooks.push(HookCapability {
+                    name: capability.name,
+                    path: capability.path,
+                    event,
+                    matcher,
+                    synthesized: capability.synthesized,
+                    usage_count: 0,
+                    success_rate: 0.0,
+                    last_used: 0,
+                    created_at: current_timestamp(),
+                    success_count: 0,
+                    failure_count: 0,
+                });
+            }
         }
 
         self.last_modified = current_timestamp();
@@ -664,6 +780,20 @@ impl CapabilityRegistry {
             CapabilityType::Agent => {
                 if let Some(agent) = self.agents.iter_mut().find(|a| a.name == capability.name) {
                     agent.path = capability.path;
+                } else {
+                    return self.register(capability);
+                }
+            }
+            CapabilityType::Hook => {
+                if let Some(hook) = self.hooks.iter_mut().find(|h| h.name == capability.name) {
+                    hook.path = capability.path;
+                    // Update event and matcher from config
+                    if let Some(event) = capability.config.get("event").and_then(|v| v.as_str()) {
+                        hook.event = event.to_string();
+                    }
+                    if let Some(matcher) = capability.config.get("matcher").and_then(|v| v.as_str()) {
+                        hook.matcher = matcher.to_string();
+                    }
                 } else {
                     return self.register(capability);
                 }
@@ -831,17 +961,22 @@ impl CapabilityRegistry {
         for agent in &self.agents {
             all.push(Capability::Agent(agent.clone()));
         }
+        for hook in &self.hooks {
+            all.push(Capability::Hook(hook.clone()));
+        }
 
         all.sort_by(|a, b| {
             let usage_a = match a {
                 Capability::Mcp(c) => c.usage_count,
                 Capability::Skill(c) => c.usage_count,
                 Capability::Agent(c) => c.usage_count,
+                Capability::Hook(c) => c.usage_count,
             };
             let usage_b = match b {
                 Capability::Mcp(c) => c.usage_count,
                 Capability::Skill(c) => c.usage_count,
                 Capability::Agent(c) => c.usage_count,
+                Capability::Hook(c) => c.usage_count,
             };
             usage_b.cmp(&usage_a)
         });

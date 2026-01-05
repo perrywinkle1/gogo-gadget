@@ -614,6 +614,8 @@ Guidelines:
     fn fallback_analysis(&self, task: &str) -> TaskAnalysis {
         let word_count = task.split_whitespace().count();
         let file_mentions = self.count_file_mentions(task);
+        let is_security_sensitive = task.to_lowercase().contains("security")
+            || task.to_lowercase().contains("auth");
 
         // Simple heuristics for fallback
         let complexity_score = match word_count {
@@ -624,7 +626,9 @@ Guidelines:
         };
 
         // Use swarm mode for high-complexity tasks even in fallback
-        let mode = if complexity_score >= 7 {
+        let mode = if is_security_sensitive {
+            ExecutionMode::Swarm { agent_count: 3 }
+        } else if complexity_score >= 7 {
             let agent_count = match complexity_score {
                 9..=10 => 5,
                 8 => 4,
@@ -651,8 +655,7 @@ Guidelines:
             detected_language: DetectedLanguage::Unknown,
             estimated_files: file_mentions.max(1),
             parallel_safe: true,
-            is_security_sensitive: task.to_lowercase().contains("security")
-                || task.to_lowercase().contains("auth"),
+            is_security_sensitive,
             codebase_complexity: self.estimate_codebase_complexity(),
             completion_criteria: "Task completed successfully".to_string(),
             required_outcomes: vec!["Task requirements met".to_string()],

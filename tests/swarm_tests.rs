@@ -358,8 +358,8 @@ fn test_agent_result_properties() {
 
 mod gas_town_swarm_tests {
     use gogo_gadget::swarm::{
-        AgentResult, DecompositionStrategy, Subtask, SwarmConfig, SwarmConfigBuilder,
-        SwarmConflict, SwarmResult,
+        AgentResult, DecompositionStrategy, Subtask, SwarmConfigBuilder, SwarmConflict,
+        SwarmResult,
     };
     use gogo_gadget::{
         CompressedResult, CompressedResultMetadata, ContextPolicy, OperationMode,

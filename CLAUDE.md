@@ -32,6 +32,7 @@ Enabled with `--swarm N` where N is the number of parallel agents.
 - LLM decomposes task into N subtasks with focus areas
 - Each subtask gets unique instructions and scope boundaries
 - Subtasks run in parallel via Claude CLI subprocesses
+- RLM is auto-used for decomposition only when repeated assignments are detected
 
 ### Goal-Anchor Drift Guard
 Extracts significant words from original task and checks agent output each iteration. If agents drift from the goal, feedback redirects them.

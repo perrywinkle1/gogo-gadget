@@ -1,7 +1,7 @@
 //! GoGoGadget: Ralph-style autonomous AI agent framework
 //!
 //! An iterative task execution system inspired by the Ralph-Wiggum pattern.
-//! Executes tasks in a loop until verified complete, detecting shortcuts
+//! Executes tasks in a loop until verified complete, detecting incomplete work
 //! and incomplete work.
 //!
 //! Features:
@@ -18,10 +18,11 @@ use colored::Colorize;
 use indicatif::{ProgressBar, ProgressStyle};
 use gogo_gadget::{
     brain::TaskAnalyzer,
-    extend::{CapabilityRegistry, GapDetector, HotLoader, SynthesisEngine},
+    extend::{CapabilityRegistry, CapabilityType},
     subagent, swarm::SwarmCoordinator, task_loop::TaskLoop, verify::Verifier,
-    AntiLazinessConfig, Config, ConsoleProgressReporter, EvidenceLevel, ExecutionMode,
-    JsonProgressReporter, ProgressCallback, ShutdownSignal, SubagentConfig,
+    AntiLazinessConfig, CompressedResult, CompressedResultMetadata, Config,
+    ConsoleProgressReporter, EvidenceLevel, ExecutionMode, JsonProgressReporter,
+    ProgressCallback, ShutdownSignal, SubagentConfig,
 };
 use serde::Serialize;
 use std::fs;
@@ -658,6 +659,33 @@ async fn main() -> Result<()> {
             subagent::SubagentExecutor::new(subagent_config.clone(), working_dir.clone())
                 .with_model(args.model.clone());
 
+        if args.dry_run {
+            let dry_result = CompressedResult {
+                success: true,
+                commit_hash: None,
+                files_changed: Vec::new(),
+                summary: "Dry run - no execution".to_string(),
+                duration_ms: 0,
+                iterations: 0,
+                error: None,
+                verified: false,
+                metadata: CompressedResultMetadata {
+                    version: env!("CARGO_PKG_VERSION").to_string(),
+                    depth: subagent_config.current_depth,
+                    parent_session_id: subagent_config.parent_session_id.clone(),
+                    completed_at: std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs(),
+                    model: args.model.clone(),
+                },
+            };
+
+            let output = executor.output_result(&dry_result);
+            println!("{}", output);
+            return Ok(());
+        }
+
         let result = executor.execute(&task).await?;
 
         // Output compressed result
@@ -804,7 +832,13 @@ async fn main() -> Result<()> {
             println!("Detected Capability Gaps:");
             println!("==========================");
             for (i, gap) in gaps.iter().enumerate() {
-                println!("\n{}. {} ({:?})", i + 1, gap.name(), gap.capability_type());
+                let gap_type = match gap.capability_type() {
+                    CapabilityType::Mcp => "MCP",
+                    CapabilityType::Skill => "Skill",
+                    CapabilityType::Agent => "Agent",
+                    CapabilityType::Hook => "Hook",
+                };
+                println!("\n{}. {} ({})", i + 1, gap.name(), gap_type);
                 match gap {
                     gogo_gadget::extend::CapabilityGap::Mcp { purpose, api_hint, .. } => {
                         println!("   Purpose: {}", purpose);
@@ -818,6 +852,11 @@ async fn main() -> Result<()> {
                     }
                     gogo_gadget::extend::CapabilityGap::Agent { specialization, .. } => {
                         println!("   Specialization: {}", specialization);
+                    }
+                    gogo_gadget::extend::CapabilityGap::Hook { event, matcher, purpose, .. } => {
+                        println!("   Event: {:?}", event);
+                        println!("   Matcher: {}", matcher);
+                        println!("   Purpose: {}", purpose);
                     }
                 }
             }
@@ -997,6 +1036,7 @@ async fn run_overseer_only(
                                 CapabilityType::Skill => synth_dir.join("skills").join(format!("{}.SKILL.md", idea.name)),
                                 CapabilityType::Mcp => synth_dir.join("mcps").join(&idea.name),
                                 CapabilityType::Agent => synth_dir.join("agents").join(format!("{}.AGENT.md", idea.name)),
+                                CapabilityType::Hook => synth_dir.join("hooks").join(format!("{}.sh", idea.name)),
                             };
 
                             if cap_path.exists() {

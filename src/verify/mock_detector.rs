@@ -514,6 +514,7 @@ fn is_hidden(entry: &walkdir::DirEntry) -> bool {
 }
 
 /// Check if a directory should be excluded (target, node_modules, etc.)
+#[allow(dead_code)]
 fn is_excluded_dir(entry: &walkdir::DirEntry) -> bool {
     let name = entry.file_name().to_string_lossy();
     matches!(
@@ -610,6 +611,7 @@ pub fn format_mock_results(result: &MockDataResult) -> String {
 }
 
 /// Extract matching lines from content (deprecated, use add_pattern_examples instead)
+#[allow(dead_code)]
 fn extract_matches(content: &str, regex: &Regex, limit: usize) -> Vec<String> {
     content
         .lines()

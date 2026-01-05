@@ -328,9 +328,15 @@ mod tests {
         assert_eq!(config.target_chunk_size, 4000);
         assert_eq!(config.chunk_overlap, 200);
         assert!(config.parallel_exploration);
-        assert_eq!(config.navigator_model, Some("claude-3-haiku-20240307".to_string()));
-        assert_eq!(config.explorer_model, None);
-        assert!(config.use_embeddings);
+        assert_eq!(
+            config.navigator_model,
+            Some("claude-haiku-4-5-20251101".to_string())
+        );
+        assert_eq!(
+            config.explorer_model,
+            Some("claude-opus-4-5-20251101".to_string())
+        );
+        assert!(!config.use_embeddings);
         assert_eq!(config.rate_limit_per_minute, 10);
     }
 

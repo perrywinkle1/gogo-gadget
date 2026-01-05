@@ -29,6 +29,8 @@ cargo build --release
 
 - **Single-agent loop**: Iterative execution + verification until completion.
 - **Worker loop**: Task decomposition + parallel agents + aggregation + verification.
+- **Worker prompt refresh**: Capabilities are refreshed each iteration so newly synthesized tools are visible.
+- **Assignment novelty**: Coordinator avoids repeating assignments and falls back to RLM-guided decomposition on repeats.
 - **Self-extend**: Detect capability gaps and synthesize tools on the fly.
 - **RLM**: Recursive Language Model mode for large codebases and cross-file analysis.
 

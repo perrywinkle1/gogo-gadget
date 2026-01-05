@@ -120,6 +120,12 @@ impl CapabilityIdea {
                 name: self.name.clone(),
                 specialization: self.description.clone(),
             },
+            CapabilityType::Hook => CapabilityGap::Hook {
+                name: self.name.clone(),
+                event: super::HookEvent::PreToolUse,
+                matcher: "*".to_string(),
+                purpose: self.description.clone(),
+            },
         }
     }
 }

@@ -210,14 +210,14 @@ impl GapDetector {
             // Explicit MCP requests
             GapPattern {
                 name: "explicit_mcp_request".to_string(),
-                pattern: r"(?i)I would need (?:an? )?MCP (?:for |to )?(.+?)(?:\.|$)".to_string(),
+                pattern: r"(?i)I would need (?:an? )?MCP(?: server)? (?:for |to )?(.+?)(?:\.|$)".to_string(),
                 gap_type: GapType::Explicit,
                 name_capture_group: 1,
                 purpose_capture_group: Some(1),
             },
             GapPattern {
                 name: "mcp_would_help".to_string(),
-                pattern: r"(?i)(?:an? )?MCP (?:for |to )(.+?) would (?:help|be useful|make this easier)".to_string(),
+                pattern: r"(?i)(?:an? )?MCP(?: server)? (?:for |to )(.+?) would (?:help|be useful|make this easier)".to_string(),
                 gap_type: GapType::Explicit,
                 name_capture_group: 1,
                 purpose_capture_group: Some(1),
@@ -637,9 +637,9 @@ mod tests {
         let detector = GapDetector::new();
 
         let history = vec![
-            TaskAttempt::failed("fetch data from API", "HTTP error 401"),
-            TaskAttempt::failed("call API endpoint", "connection refused"),
-            TaskAttempt::failed("request API data", "unauthorized"),
+            TaskAttempt::failed("fetch api data", "HTTP error 401"),
+            TaskAttempt::failed("fetch api data from endpoint", "connection refused"),
+            TaskAttempt::failed("fetch api data from service", "unauthorized"),
         ];
 
         let gap = detector.analyze_failure_pattern(&history);

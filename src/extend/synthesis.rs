@@ -581,6 +581,38 @@ Return ONLY the complete AGENT.md content, no explanations."#,
                     template = template.content
                 )
             }
+            CapabilityGap::Hook { name, event, matcher, purpose } => {
+                format!(
+                    r#"Generate a complete shell script hook for Claude Code.
+
+**Name**: {name}
+**Event**: {event:?}
+**Matcher**: {matcher}
+**Purpose**: {purpose}
+
+Use this template as a starting point:
+
+```bash
+{template}
+```
+
+Requirements:
+1. Replace all placeholder {{{{...}}}} with actual values
+2. Implement the actual logic
+3. Add proper error handling
+4. Exit with 0 for success, non-zero for failure
+5. Output any warnings/errors to stderr
+6. Keep the script focused on a single purpose
+7. Make it executable and portable (bash-compatible)
+
+Return ONLY the complete shell script content, no explanations."#,
+                    name = name,
+                    event = event,
+                    matcher = matcher,
+                    purpose = purpose,
+                    template = template.content
+                )
+            }
         }
     }
 
@@ -635,6 +667,12 @@ Return ONLY the complete AGENT.md content, no explanations."#,
             CapabilityGap::Agent { name, specialization } => {
                 result = result.replace("{{name}}", name);
                 result = result.replace("{{specialization}}", specialization);
+            }
+            CapabilityGap::Hook { name, event, matcher, purpose } => {
+                result = result.replace("{{name}}", name);
+                result = result.replace("{{event}}", event.as_str());
+                result = result.replace("{{matcher}}", matcher);
+                result = result.replace("{{purpose}}", purpose);
             }
         }
 
@@ -825,12 +863,103 @@ Return ONLY the complete AGENT.md content, no explanations."#,
         })
     }
 
+    /// Synthesize a hook capability
+    pub async fn synthesize_hook(
+        &self,
+        gap: &CapabilityGap,
+    ) -> anyhow::Result<SynthesisResult> {
+        let name = gap.name();
+        let hooks_dir = self.output_dir.join("hooks");
+        std::fs::create_dir_all(&hooks_dir)?;
+
+        // Get hook-specific info from gap
+        let (event, matcher) = if let CapabilityGap::Hook { event, matcher, .. } = gap {
+            (event.as_str().to_string(), matcher.clone())
+        } else {
+            ("PreToolUse".to_string(), "*".to_string())
+        };
+
+        // Create a basic hook template
+        let default_template = r#"#!/bin/bash
+# {{name}} hook
+# Event: {{event}}
+# Matcher: {{matcher}}
+# Purpose: {{purpose}}
+
+set -e
+
+# Add your hook logic here
+
+exit 0
+"#;
+
+        let template = SynthesisTemplate {
+            name: "hook".to_string(),
+            template_type: TemplateType::SkillGeneric, // Reuse skill type for now
+            language: "bash".to_string(),
+            content: default_template.to_string(),
+        };
+
+        let (content, used_claude, claude_output) = if self.use_claude {
+            let prompt = self.generate_synthesis_prompt(gap, &template);
+            match self.call_claude(&prompt) {
+                Ok(output) => {
+                    // Extract bash code from markdown code blocks if present
+                    let code = extract_code_block(&output);
+                    (code, true, Some(output))
+                }
+                Err(e) => {
+                    let content = self.apply_template(&template.content, gap);
+                    (content, false, Some(format!("Claude failed: {}", e)))
+                }
+            }
+        } else {
+            let content = self.apply_template(&template.content, gap);
+            (content, false, None)
+        };
+
+        let hook_path = hooks_dir.join(format!("{}.sh", name));
+        std::fs::write(&hook_path, &content)?;
+
+        // Make executable on Unix
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(&hook_path)?.permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&hook_path, perms)?;
+        }
+
+        let mut capability = SynthesizedCapability::new(CapabilityType::Hook, name, hook_path);
+        capability.config = serde_json::json!({
+            "event": event,
+            "matcher": matcher
+        });
+
+        Ok(SynthesisResult {
+            capability,
+            used_claude,
+            prompt: if self.use_claude {
+                self.generate_synthesis_prompt(gap, &template)
+            } else {
+                String::new()
+            },
+            claude_output,
+            notes: if used_claude {
+                vec!["Generated with Claude".to_string()]
+            } else {
+                vec!["Generated from template".to_string()]
+            },
+        })
+    }
+
     /// Synthesize a capability based on gap type
     pub async fn synthesize(&self, gap: &CapabilityGap) -> anyhow::Result<SynthesisResult> {
         match gap {
             CapabilityGap::Mcp { .. } => self.synthesize_mcp(gap).await,
             CapabilityGap::Skill { .. } => self.synthesize_skill(gap).await,
             CapabilityGap::Agent { .. } => self.synthesize_agent(gap).await,
+            CapabilityGap::Hook { .. } => self.synthesize_hook(gap).await,
         }
     }
 

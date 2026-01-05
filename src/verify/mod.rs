@@ -38,26 +38,6 @@ use std::process::Command;
 use std::time::SystemTime;
 use tracing::debug;
 
-// =============================================================================
-// DEPRECATED: Shortcut types maintained for backward compatibility
-// These should be removed once task_loop.rs is updated
-// =============================================================================
-
-/// Deprecated: Shortcut type for backward compatibility
-/// The new verification system uses LLM-based completion checking instead
-#[deprecated(note = "Use LlmCompletionCheck instead of shortcut detection")]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ShortcutType {
-    /// Deprecated placeholder - no longer used
-    None,
-}
-
-impl Default for ShortcutType {
-    fn default() -> Self {
-        ShortcutType::None
-    }
-}
-
 /// Result of running build command
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct BuildResult {
@@ -146,10 +126,6 @@ pub struct VerificationResult {
     /// Whether evidence was insufficient for completion claim
     #[serde(default)]
     pub evidence_insufficient: bool,
-    /// Deprecated: shortcuts field maintained for backward compatibility
-    /// This is always empty - use llm_check instead
-    #[deprecated(note = "Use llm_check.next_steps instead")]
-    pub shortcuts: Vec<ShortcutType>,
 }
 
 impl VerificationResult {

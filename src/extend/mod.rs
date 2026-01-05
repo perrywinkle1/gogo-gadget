@@ -25,7 +25,7 @@ pub use loader::{HotLoader, LoadResult};
 
 // Re-export main types from registry module
 pub use registry::{
-    AgentCapability, Capability, CapabilityRegistry, McpCapability, RegistryStats, SkillCapability,
+    AgentCapability, Capability, CapabilityRegistry, HookCapability, McpCapability, RegistryStats, SkillCapability,
 };
 
 // Re-export main types from synthesis module
@@ -46,6 +46,9 @@ pub use overseer::{
 // Re-export main types from context module
 pub use context::{SharedContext, TaskPhase, TaskSnapshot};
 
+// Re-export HookEvent enum (defined locally in this module)
+// Note: HookEvent is already defined in this module, no re-export needed
+
 /// Type of capability that can be synthesized
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CapabilityType {
@@ -55,6 +58,8 @@ pub enum CapabilityType {
     Skill,
     /// AGENT.md agent definition
     Agent,
+    /// Hook (PreToolUse, PostToolUse, etc.)
+    Hook,
 }
 
 impl Default for CapabilityType {
@@ -70,6 +75,31 @@ impl CapabilityType {
             Self::Mcp => "mcp",
             Self::Skill => "skill",
             Self::Agent => "agent",
+            Self::Hook => "hook",
+        }
+    }
+}
+
+/// Hook event type
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum HookEvent {
+    /// Runs before a tool is executed
+    PreToolUse,
+    /// Runs after a tool is executed
+    PostToolUse,
+    /// Runs when notification is triggered
+    Notification,
+    /// Runs before user prompt is submitted
+    UserPromptSubmit,
+}
+
+impl HookEvent {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::PreToolUse => "PreToolUse",
+            Self::PostToolUse => "PostToolUse",
+            Self::Notification => "Notification",
+            Self::UserPromptSubmit => "UserPromptSubmit",
         }
     }
 }
@@ -94,6 +124,13 @@ pub enum CapabilityGap {
         name: String,
         specialization: String,
     },
+    /// Need for a hook
+    Hook {
+        name: String,
+        event: HookEvent,
+        matcher: String,
+        purpose: String,
+    },
 }
 
 impl CapabilityGap {
@@ -103,6 +140,7 @@ impl CapabilityGap {
             Self::Mcp { name, .. } => name,
             Self::Skill { name, .. } => name,
             Self::Agent { name, .. } => name,
+            Self::Hook { name, .. } => name,
         }
     }
 
@@ -112,6 +150,7 @@ impl CapabilityGap {
             Self::Mcp { .. } => CapabilityType::Mcp,
             Self::Skill { .. } => CapabilityType::Skill,
             Self::Agent { .. } => CapabilityType::Agent,
+            Self::Hook { .. } => CapabilityType::Hook,
         }
     }
 }

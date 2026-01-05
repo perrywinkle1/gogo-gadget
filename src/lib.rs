@@ -5,7 +5,7 @@
 //!
 //! - **Task Analysis**: Analyze tasks for complexity and execution strategy
 //! - **Task Loop**: Ralph-style iteration until verified completion
-//! - **Verification**: Detect shortcuts, incomplete work, and mock data
+//! - **Verification**: Detect incomplete work and mock data
 //! - **Checkpointing**: Save and restore execution state between iterations
 //! - **Parallel Execution**: Support for multi-file parallel task execution
 //! - **Signal Handling**: Graceful shutdown on SIGINT/SIGTERM

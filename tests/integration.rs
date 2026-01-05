@@ -1313,8 +1313,8 @@ mod timeout_edge_cases {
 
         let elapsed = start.elapsed();
 
-        // Either we exceeded the timeout or we matched it exactly (both acceptable)
-        assert!(elapsed >= timeout || elapsed.as_nanos() >= 0);
+        // We should exceed or match the timeout for a non-trivial loop
+        assert!(elapsed >= timeout);
     }
 
     #[test]
@@ -2199,7 +2199,7 @@ mod gas_town_tests {
 
 mod extend_integration_tests {
     use gogo_gadget::extend::{
-        CapabilityGap, CapabilityRegistry, CapabilityType, GapDetector, HotLoader,
+        CapabilityGap, CapabilityRegistry, CapabilityType, GapDetector, HotLoader, HookEvent,
         SynthesisEngine, SynthesizedCapability, CapabilityVerifier, VerificationResult,
     };
     use std::path::PathBuf;
@@ -2407,13 +2407,19 @@ mod extend_integration_tests {
 
     #[test]
     fn test_capability_type_match_exhaustiveness() {
-        let types = [CapabilityType::Mcp, CapabilityType::Skill, CapabilityType::Agent];
+        let types = [
+            CapabilityType::Mcp,
+            CapabilityType::Skill,
+            CapabilityType::Agent,
+            CapabilityType::Hook,
+        ];
 
         for cap_type in types {
             let description = match cap_type {
                 CapabilityType::Mcp => "Model Context Protocol server",
                 CapabilityType::Skill => "Skill definition file",
                 CapabilityType::Agent => "Subagent configuration",
+                CapabilityType::Hook => "Execution hook",
             };
             assert!(!description.is_empty());
         }
@@ -2436,6 +2442,12 @@ mod extend_integration_tests {
                 name: "test".to_string(),
                 specialization: "test".to_string(),
             },
+            CapabilityGap::Hook {
+                name: "test".to_string(),
+                event: HookEvent::PreToolUse,
+                matcher: "test".to_string(),
+                purpose: "test".to_string(),
+            },
         ];
 
         for gap in gaps {
@@ -2443,6 +2455,7 @@ mod extend_integration_tests {
                 CapabilityGap::Mcp { .. } => "mcp",
                 CapabilityGap::Skill { .. } => "skill",
                 CapabilityGap::Agent { .. } => "agent",
+                CapabilityGap::Hook { .. } => "hook",
             };
             assert!(!gap_type.is_empty());
         }

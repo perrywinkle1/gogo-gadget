@@ -88,19 +88,6 @@ impl LoadResult {
     }
 }
 
-/// Claude Code settings file structure
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-struct ClaudeSettings {
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    permissions: Vec<String>,
-
-    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-    mcpServers: HashMap<String, McpServerConfig>,
-
-    #[serde(flatten)]
-    other: serde_json::Value,
-}
-
 /// MCP server configuration in Claude settings
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct McpServerConfig {
@@ -114,16 +101,18 @@ struct McpServerConfig {
 /// Hot loader for registering capabilities at runtime
 #[derive(Debug, Clone)]
 pub struct HotLoader {
-    /// Path to Claude settings file
+    /// Path to Claude settings file (for MCPs: ~/.claude.json)
     claude_settings_path: PathBuf,
+    /// Path to Claude Code settings file (for hooks: ~/.claude/settings.json)
+    hooks_settings_path: PathBuf,
     /// Directory for skills
     skills_dir: PathBuf,
     /// Directory for agents
     agents_dir: PathBuf,
     /// Directory for MCP servers
     mcp_dir: PathBuf,
-    /// GoGoGadget capabilities directory
-    gadget_capabilities_dir: PathBuf,
+    /// Directory for hook scripts
+    hooks_dir: PathBuf,
 }
 
 impl Default for HotLoader {
@@ -136,13 +125,16 @@ impl HotLoader {
     /// Create a new hot loader with default paths
     pub fn new() -> Self {
         let home = dirs_home().unwrap_or_else(|| PathBuf::from("."));
+        let claude_dir = home.join(".claude");
         Self {
-            // Use claude_desktop_config.json for MCP registration (not settings.json)
-            claude_settings_path: home.join(".claude").join("claude_desktop_config.json"),
-            skills_dir: home.join(".claude").join("skills"),
-            agents_dir: home.join(".claude").join("agents"),
-            mcp_dir: home.join(".claude").join("mcp-servers"),
-            gadget_capabilities_dir: home.join(".gogo-gadget").join("capabilities"),
+            // Claude Code reads MCP config from ~/.claude.json (NOT settings.json)
+            claude_settings_path: home.join(".claude.json"),
+            // Claude Code reads hooks from ~/.claude/settings.json
+            hooks_settings_path: claude_dir.join("settings.json"),
+            skills_dir: claude_dir.join("skills"),
+            agents_dir: claude_dir.join("agents"),
+            mcp_dir: claude_dir.join("mcp-servers"),
+            hooks_dir: claude_dir.join("hooks"),
         }
     }
 
@@ -153,12 +145,14 @@ impl HotLoader {
         agents_dir: PathBuf,
     ) -> Self {
         let home = dirs_home().unwrap_or_else(|| PathBuf::from("."));
+        let claude_dir = home.join(".claude");
         Self {
             claude_settings_path: claude_settings,
+            hooks_settings_path: claude_dir.join("settings.json"),
             skills_dir,
             agents_dir,
-            mcp_dir: home.join(".claude").join("mcp-servers"),
-            gadget_capabilities_dir: home.join(".gogo-gadget").join("capabilities"),
+            mcp_dir: claude_dir.join("mcp-servers"),
+            hooks_dir: claude_dir.join("hooks"),
         }
     }
 
@@ -223,7 +217,7 @@ impl HotLoader {
     }
 
     /// Create MCP configuration for Claude settings
-    fn create_mcp_config(&self, name: &str, mcp_path: &PathBuf) -> Result<McpServerConfig> {
+    fn create_mcp_config(&self, _name: &str, mcp_path: &PathBuf) -> Result<McpServerConfig> {
         // Determine the entry point
         let index_ts = mcp_path.join("src").join("index.ts");
         let index_js = mcp_path.join("dist").join("index.js");
@@ -270,8 +264,9 @@ impl HotLoader {
             settings["mcpServers"] = serde_json::json!({});
         }
 
-        // Add the MCP server configuration
+        // Add the MCP server configuration (Claude Code requires type: "stdio")
         settings["mcpServers"][name] = serde_json::json!({
+            "type": "stdio",
             "command": config.command,
             "args": config.args,
             "env": config.env
@@ -384,12 +379,162 @@ impl HotLoader {
         .with_path(agent_dir))
     }
 
+    /// Register a hook capability
+    ///
+    /// Hooks are shell scripts that run before/after tool execution.
+    /// Claude Code expects hooks configured in ~/.claude/settings.json
+    /// Hook scripts are stored in ~/.claude/hooks/
+    /// Restart required for hook changes to take effect.
+    pub fn register_hook(&self, capability: &SynthesizedCapability) -> Result<LoadResult> {
+        info!("Registering hook: {}", capability.name);
+
+        // Ensure hooks directory exists
+        fs::create_dir_all(&self.hooks_dir).context("Failed to create hooks directory")?;
+
+        // Parse hook configuration from capability config
+        let hook_config = &capability.config;
+        let event = hook_config
+            .get("event")
+            .and_then(|v| v.as_str())
+            .unwrap_or("PreToolUse");
+        let matcher = hook_config
+            .get("matcher")
+            .and_then(|v| v.as_str())
+            .unwrap_or("*");
+        let timeout = hook_config
+            .get("timeout")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(30) as u32;
+
+        // Copy hook script to hooks directory
+        let hook_name = capability.name.trim_end_matches(".sh");
+        let script_dest = self.hooks_dir.join(format!("{}.sh", hook_name));
+
+        if capability.path.is_file() {
+            fs::copy(&capability.path, &script_dest).context("Failed to copy hook script")?;
+        } else if capability.path.is_dir() {
+            // Look for the hook script in the directory
+            let script_file = capability.path.join(format!("{}.sh", hook_name));
+            let alt_script = capability.path.join("hook.sh");
+            if script_file.exists() {
+                fs::copy(&script_file, &script_dest)?;
+            } else if alt_script.exists() {
+                fs::copy(&alt_script, &script_dest)?;
+            } else {
+                return Err(anyhow::anyhow!(
+                    "Could not find hook script in directory {:?}",
+                    capability.path
+                ));
+            }
+        } else {
+            return Err(anyhow::anyhow!(
+                "Hook path does not exist: {:?}",
+                capability.path
+            ));
+        }
+
+        // Make script executable
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = fs::metadata(&script_dest)?.permissions();
+            perms.set_mode(0o755);
+            fs::set_permissions(&script_dest, perms)?;
+        }
+
+        // Update Claude settings to register the hook
+        self.update_claude_settings_hook(hook_name, event, matcher, &script_dest, timeout)?;
+
+        debug!("Hook installed at {:?}", script_dest);
+
+        Ok(LoadResult::requires_restart(format!(
+            "Hook '{}' registered at {:?}. Restart Claude Code to activate.",
+            hook_name, script_dest
+        ))
+        .with_path(script_dest))
+    }
+
+    /// Update Claude settings with hook configuration
+    fn update_claude_settings_hook(
+        &self,
+        name: &str,
+        event: &str,
+        matcher: &str,
+        script_path: &PathBuf,
+        timeout: u32,
+    ) -> Result<()> {
+        // Ensure parent directory exists
+        if let Some(parent) = self.hooks_settings_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+
+        // Read existing settings or create new
+        let mut settings: serde_json::Value = if self.hooks_settings_path.exists() {
+            let content = fs::read_to_string(&self.hooks_settings_path)?;
+            serde_json::from_str(&content).unwrap_or_else(|_| serde_json::json!({}))
+        } else {
+            serde_json::json!({})
+        };
+
+        // Ensure hooks object exists
+        if settings.get("hooks").is_none() {
+            settings["hooks"] = serde_json::json!({});
+        }
+
+        // Ensure event array exists
+        if settings["hooks"].get(event).is_none() {
+            settings["hooks"][event] = serde_json::json!([]);
+        }
+
+        // Build the command string
+        let command = format!("bash {}", script_path.display());
+
+        // Create the new hook entry
+        let new_hook_entry = serde_json::json!({
+            "matcher": matcher,
+            "hooks": [{
+                "type": "command",
+                "command": command,
+                "timeout": timeout
+            }]
+        });
+
+        // Check if a hook with this matcher already exists; update it if so
+        let hooks_array = settings["hooks"][event].as_array_mut();
+        if let Some(arr) = hooks_array {
+            let mut found = false;
+            for entry in arr.iter_mut() {
+                if entry.get("matcher").and_then(|m| m.as_str()) == Some(matcher) {
+                    // Update existing entry
+                    *entry = new_hook_entry.clone();
+                    found = true;
+                    break;
+                }
+            }
+            if !found {
+                arr.push(new_hook_entry);
+            }
+        }
+
+        // Write back
+        let content = serde_json::to_string_pretty(&settings)?;
+        fs::write(&self.hooks_settings_path, content)?;
+
+        info!(
+            "Updated Claude settings with hook '{}' ({}) at {:?}",
+            name, event, self.hooks_settings_path
+        );
+
+        Ok(())
+    }
+
     /// Register any capability based on its type
     pub fn register(&self, capability: &SynthesizedCapability) -> Result<LoadResult> {
         match capability.capability_type {
             CapabilityType::Mcp => self.register_mcp(capability),
             CapabilityType::Skill => self.register_skill(capability),
             CapabilityType::Agent => self.register_agent(capability),
+            CapabilityType::Hook => self.register_hook(capability),
         }
     }
 
@@ -478,6 +623,25 @@ impl HotLoader {
         )))
     }
 
+    /// Unregister a hook capability
+    pub fn unregister_hook(&self, name: &str) -> Result<LoadResult> {
+        let hook_name = name.trim_end_matches(".sh");
+
+        // Remove hook script
+        let script_path = self.hooks_dir.join(format!("{}.sh", hook_name));
+        if script_path.exists() {
+            fs::remove_file(&script_path)?;
+        }
+
+        // Note: We don't remove from settings.json automatically as hooks may have
+        // multiple scripts or be manually configured. User should manage this.
+
+        Ok(LoadResult::requires_restart(format!(
+            "Hook '{}' script removed. Manually update ~/.claude/settings.json if needed.",
+            hook_name
+        )))
+    }
+
     /// List all installed skills
     pub fn list_skills(&self) -> Result<Vec<String>> {
         if !self.skills_dir.exists() {
@@ -562,6 +726,28 @@ impl HotLoader {
         Ok(mcps)
     }
 
+    /// List all installed hooks
+    pub fn list_hooks(&self) -> Result<Vec<String>> {
+        if !self.hooks_dir.exists() {
+            return Ok(Vec::new());
+        }
+
+        let mut hooks = Vec::new();
+        for entry in fs::read_dir(&self.hooks_dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.is_file() {
+                if let Some(name) = path.file_name() {
+                    let name = name.to_string_lossy();
+                    if name.ends_with(".sh") {
+                        hooks.push(name.trim_end_matches(".sh").to_string());
+                    }
+                }
+            }
+        }
+        Ok(hooks)
+    }
+
     /// Reload Claude config (signal that changes were made)
     ///
     /// Note: This is a no-op for now as Claude Code doesn't support hot reloading.
@@ -589,6 +775,16 @@ impl HotLoader {
     /// Get MCP directory
     pub fn mcp_dir(&self) -> &PathBuf {
         &self.mcp_dir
+    }
+
+    /// Get hooks directory
+    pub fn hooks_dir(&self) -> &PathBuf {
+        &self.hooks_dir
+    }
+
+    /// Get hooks settings path
+    pub fn hooks_settings_path(&self) -> &PathBuf {
+        &self.hooks_settings_path
     }
 }
 
